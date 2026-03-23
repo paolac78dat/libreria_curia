@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#6c63ff" />
+    <title>Biblioteca</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Biblioteca personale</p>
+          <h1>La mia biblioteca</h1>
+          <p class="subtitle">
+            Registra e cerca i tuoi libri in modo semplice.
+          </p>
+        </div>
+      </header>
+
+      <section id="messageBox" class="message hidden"></section>
+
+      <!-- APP SEMPRE VISIBILE -->
+      <section id="appCard">
+
+        <div class="toolbar card">
+          <div>
+            <h2>Archivio libri</h2>
+            <p>Modalità locale senza login</p>
+          </div>
+          <div class="actions wrap right">
+            <button id="refreshBtn" class="secondary">Aggiorna</button>
+          </div>
+        </div>
+
+        <div class="layout">
+          <!-- FORM -->
+          <section class="card">
+            <div class="card-header">
+              <h2>Aggiungi o modifica libro</h2>
+            </div>
+
+            <input type="hidden" id="bookId" />
+
+            <div class="grid two-col">
+              <label>
+                <span>Titolo</span>
+                <input id="title" placeholder="Titolo libro" />
+              </label>
+              <label>
+                <span>Autore</span>
+                <input id="author" placeholder="Autore" />
+              </label>
+              <label>
+                <span>Genere</span>
+                <input id="genre" placeholder="Genere" />
+              </label>
+              <label>
+                <span>Stato</span>
+                <select id="status">
+                  <option>Da leggere</option>
+                  <option>In lettura</option>
+                  <option>Letto</option>
+                </select>
+              </label>
+            </div>
+
+            <label>
+              <span>Note</span>
+              <textarea id="notes" rows="4" placeholder="Le tue note"></textarea>
+            </label>
+
+            <div class="actions wrap">
+              <button id="saveBookBtn">Salva libro</button>
+              <button id="clearFormBtn" class="secondary">Pulisci</button>
+            </div>
+          </section>
+
+          <!-- FILTRI -->
+          <section class="card">
+            <div class="card-header">
+              <h2>Filtri</h2>
+            </div>
+
+            <div class="grid two-col">
+              <label>
+                <span>Ricerca veloce</span>
+                <input id="searchAll" placeholder="Titolo, autore..." />
+              </label>
+              <label>
+                <span>Titolo</span>
+                <input id="fTitle" />
+              </label>
+              <label>
+                <span>Autore</span>
+                <input id="fAuthor" />
+              </label>
+              <label>
+                <span>Genere</span>
+                <input id="fGenre" />
+              </label>
+              <label>
+                <span>Stato</span>
+                <select id="fStatus">
+                  <option value="">Tutti</option>
+                  <option>Da leggere</option>
+                  <option>In lettura</option>
+                  <option>Letto</option>
+                </select>
+              </label>
+              <label>
+                <span>Note</span>
+                <input id="fNotes" />
+              </label>
+            </div>
+
+            <div class="actions wrap">
+              <button id="applyFiltersBtn">Cerca</button>
+              <button id="resetFiltersBtn" class="secondary">Reset</button>
+            </div>
+
+            <p id="resultsCount" class="results-counter">0 libri</p>
+          </section>
+        </div>
+
+        <!-- ELENCO -->
+        <section class="card">
+          <div class="card-header">
+            <h2>Libri</h2>
+            <p>Mostrati solo su richiesta o ricerca</p>
+          </div>
+
+          <div class="actions wrap">
+            <button id="showBooksBtn" class="secondary">Mostra libri</button>
+            <button id="hideBooksBtn" class="secondary">Nascondi</button>
+          </div>
+
+          <div id="booksWrapper" class="hidden">
+            <div id="books" class="books-grid"></div>
+          </div>
+        </section>
+
+      </section>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="config.js"></script>
+    <script src="supabase.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
