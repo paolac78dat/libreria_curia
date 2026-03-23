@@ -139,8 +139,9 @@ function applyClientFilters(data) {
 function renderBooks(data) {
   const filtered = applyClientFilters(data || []);
 
-  if (els.resultsCount) {
-    els.resultsCount.textContent = `${filtered.length} libro${filtered.length === 1 ? "" : "i"}`;
+ if (els.resultsCount) {
+  const count = filtered.length;
+  els.resultsCount.textContent = count === 1 ? "1 libro" : `${count} libri`;
   }
 
   if (!booksVisible && !hasActiveFilters()) {
