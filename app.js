@@ -1,12 +1,20 @@
 let allBooks = [];
 let editingBookId = null;
 let booksVisible = false;
+let currentPage = 1;
+let pageSize = 20;
+let currentSort = "recent";
 
 const els = {
   messageBox: document.getElementById("messageBox"),
   books: document.getElementById("books"),
   booksWrapper: document.getElementById("booksWrapper"),
   resultsCount: document.getElementById("resultsCount"),
+  pageInfo: document.getElementById("pageInfo"),
+  pageSizeSelect: document.getElementById("pageSizeSelect"),
+  sortSelect: document.getElementById("sortSelect"),
+  prevPageBtn: document.getElementById("prevPageBtn"),
+  nextPageBtn: document.getElementById("nextPageBtn"),
 
   title: document.getElementById("title"),
   author: document.getElementById("author"),
@@ -93,8 +101,20 @@ function resetFilters() {
     if (els[key]) els[key].value = "";
   });
   localStorage.removeItem("biblioteca-filters");
+  currentPage = 1;
   hideBooks();
-  if (els.resultsCount) els.resultsCount.textContent = "0 libri";
+
+  if (els.resultsCount) {
+    els.resultsCount.textContent = "0 libri";
+  }
+
+  if (els.books) {
+    els.books.innerHTML = "";
+  }
+
+  if (els.pageInfo) {
+    els.pageInfo.textContent = "Pagina 1 di 1";
+  }
 }
 
 function clearForm() {
@@ -106,8 +126,26 @@ function clearForm() {
   if (els.notes) els.notes.value = "";
 }
 
-function getStatusClass(status) {
-  return `status-${String(status || "Da leggere").replaceAll(" ", "-")}`;
+function sortBooks(data) {
+  const sorted = [...data];
+
+  if (currentSort === "title-asc") {
+    sorted.sort((a, b) => normalize(a.title).localeCompare(normalize(b.title), "it"));
+    return sorted;
+  }
+
+  if (currentSort === "author-asc") {
+    sorted.sort((a, b) => normalize(a.author).localeCompare(normalize(b.author), "it"));
+    return sorted;
+  }
+
+  sorted.sort((a, b) => {
+    const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return dateB - dateA;
+  });
+
+  return sorted;
 }
 
 function applyClientFilters(data) {
@@ -137,11 +175,11 @@ function applyClientFilters(data) {
 }
 
 function renderBooks(data) {
-  const filtered = applyClientFilters(data || []);
-
- if (els.resultsCount) {
+  const filtered = sortBooks(applyClientFilters(data || []));
   const count = filtered.length;
-  els.resultsCount.textContent = count === 1 ? "1 libro" : `${count} libri`;
+
+  if (els.resultsCount) {
+    els.resultsCount.textContent = count === 1 ? "1 libro" : `${count} libri`;
   }
 
   if (!booksVisible && !hasActiveFilters()) {
@@ -155,35 +193,47 @@ function renderBooks(data) {
 
   if (!els.books) return;
 
-  if (!filtered.length) {
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  if (currentPage > totalPages) currentPage = totalPages;
+
+  const start = (currentPage - 1) * pageSize;
+  const pageItems = filtered.slice(start, start + pageSize);
+
+  if (els.pageInfo) {
+    els.pageInfo.textContent = `Pagina ${currentPage} di ${totalPages}`;
+  }
+
+  if (els.prevPageBtn) {
+    els.prevPageBtn.disabled = currentPage === 1;
+  }
+
+  if (els.nextPageBtn) {
+    els.nextPageBtn.disabled = currentPage === totalPages;
+  }
+
+  if (!pageItems.length) {
     els.books.innerHTML = `
-      <div class="empty-state">
-        Nessun libro trovato.
-      </div>
+      <tr>
+        <td colspan="6" class="empty-row">Nessun libro trovato.</td>
+      </tr>
     `;
     return;
   }
 
-  els.books.innerHTML = filtered
-    .map((book) => {
-      return `
-        <article class="book-card">
-          <div class="book-body">
-            <h3>${sanitize(book.title || "Senza titolo")}</h3>
-            <p class="book-meta">${sanitize(book.author || "Autore non indicato")}</p>
-            <div class="badges">
-              <span class="badge ${getStatusClass(book.status)}">${sanitize(book.status || "Da leggere")}</span>
-              ${book.genre ? `<span class="badge">${sanitize(book.genre)}</span>` : ""}
-            </div>
-            ${book.notes ? `<p>${sanitize(book.notes)}</p>` : `<p class="muted">Nessuna nota</p>`}
-            <div class="book-actions">
-              <button class="secondary" data-edit="${book.id}">Modifica</button>
-              <button class="danger" data-delete="${book.id}">Elimina</button>
-            </div>
-          </div>
-        </article>
-      `;
-    })
+  els.books.innerHTML = pageItems
+    .map((book) => `
+      <tr>
+        <td>${sanitize(book.title || "")}</td>
+        <td>${sanitize(book.author || "")}</td>
+        <td>${sanitize(book.genre || "")}</td>
+        <td>${sanitize(book.status || "")}</td>
+        <td>${sanitize(book.notes || "")}</td>
+        <td class="row-actions">
+          <button class="secondary" data-edit="${book.id}">Modifica</button>
+          <button class="danger" data-delete="${book.id}">Elimina</button>
+        </td>
+      </tr>
+    `)
     .join("");
 }
 
@@ -227,6 +277,7 @@ async function saveBook() {
   };
 
   let response;
+  const wasEditing = !!editingBookId;
 
   if (editingBookId) {
     response = await sb
@@ -247,7 +298,9 @@ async function saveBook() {
   }
 
   clearForm();
-  showMessage(editingBookId ? "Libro aggiornato." : "Libro salvato.", "success");
+  showMessage(wasEditing ? "Libro aggiornato." : "Libro salvato.", "success");
+  showBooks();
+  currentPage = 1;
   await fetchBooks();
 }
 
@@ -287,31 +340,71 @@ function bootstrap() {
   loadFilters();
   hideBooks();
 
+  if (els.pageSizeSelect) {
+    pageSize = Number(els.pageSizeSelect.value) || 20;
+  }
+
+  if (els.sortSelect) {
+    currentSort = els.sortSelect.value || "recent";
+  }
+
   document.getElementById("saveBookBtn")?.addEventListener("click", saveBook);
   document.getElementById("clearFormBtn")?.addEventListener("click", clearForm);
   document.getElementById("refreshBtn")?.addEventListener("click", fetchBooks);
+
   document.getElementById("applyFiltersBtn")?.addEventListener("click", () => {
+    currentPage = 1;
     showBooks();
     renderBooks(allBooks);
   });
+
   document.getElementById("resetFiltersBtn")?.addEventListener("click", resetFilters);
+
   document.getElementById("showBooksBtn")?.addEventListener("click", () => {
+    currentPage = 1;
     showBooks();
     renderBooks(allBooks);
   });
+
   document.getElementById("hideBooksBtn")?.addEventListener("click", hideBooks);
+
+  els.pageSizeSelect?.addEventListener("change", () => {
+    pageSize = Number(els.pageSizeSelect.value) || 20;
+    currentPage = 1;
+    renderBooks(allBooks);
+  });
+
+  els.sortSelect?.addEventListener("change", () => {
+    currentSort = els.sortSelect.value || "recent";
+    currentPage = 1;
+    renderBooks(allBooks);
+  });
+
+  els.prevPageBtn?.addEventListener("click", () => {
+    if (currentPage > 1) {
+      currentPage--;
+      renderBooks(allBooks);
+    }
+  });
+
+  els.nextPageBtn?.addEventListener("click", () => {
+    const total = Math.max(1, Math.ceil(sortBooks(applyClientFilters(allBooks)).length / pageSize));
+    if (currentPage < total) {
+      currentPage++;
+      renderBooks(allBooks);
+    }
+  });
 
   filterKeys.forEach((key) => {
     els[key]?.addEventListener("input", () => {
-      if (hasActiveFilters()) {
-        showBooks();
-      }
+      currentPage = 1;
+      if (hasActiveFilters()) showBooks();
       renderBooks(allBooks);
     });
+
     els[key]?.addEventListener("change", () => {
-      if (hasActiveFilters()) {
-        showBooks();
-      }
+      currentPage = 1;
+      if (hasActiveFilters()) showBooks();
       renderBooks(allBooks);
     });
   });
