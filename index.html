@@ -146,10 +146,47 @@
           <div class="actions wrap">
             <button id="showBooksBtn" class="secondary">Mostra libri</button>
             <button id="hideBooksBtn" class="secondary">Nascondi</button>
+
+            <label class="page-size-box">
+              <span>Per pagina</span>
+              <select id="pageSizeSelect">
+                <option value="10">10</option>
+                <option value="20" selected>20</option>
+              </select>
+            </label>
+
+            <label class="sort-box">
+              <span>Ordina per</span>
+              <select id="sortSelect">
+                <option value="recent" selected>Ultimi aggiunti</option>
+                <option value="title-asc">Titolo (A-Z)</option>
+                <option value="author-asc">Autore (A-Z)</option>
+              </select>
+            </label>
           </div>
 
           <div id="booksWrapper" class="hidden">
-            <div id="books" class="books-grid"></div>
+            <div class="table-wrap">
+              <table class="books-table">
+                <thead>
+                  <tr>
+                    <th>Titolo</th>
+                    <th>Autore</th>
+                    <th>Genere</th>
+                    <th>Stato</th>
+                    <th>Note</th>
+                    <th>Azioni</th>
+                  </tr>
+                </thead>
+                <tbody id="books"></tbody>
+              </table>
+            </div>
+
+            <div class="pagination">
+              <button id="prevPageBtn" class="secondary">Precedente</button>
+              <span id="pageInfo">Pagina 1 di 1</span>
+              <button id="nextPageBtn" class="secondary">Successiva</button>
+            </div>
           </div>
         </section>
       </section>
