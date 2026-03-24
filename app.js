@@ -37,8 +37,7 @@ const els = {
   scanStatus: document.getElementById("scanStatus")
 };
 
-const filterKeys = ["searchAll", "fTitle", "fAuthor", "fGenre", "fStatus", "fNotes"];
-let tesseractLoaderPromise = null;
+const filterKeys = ["searchAll", "fTitle", "fAuthor", "fGenre", "fStatus", "fNotes"]; let tesseractLoaderPromise = null;
 
 function showMessage(text, type = "info") {
   if (!els.messageBox) return;
@@ -50,8 +49,7 @@ function showMessage(text, type = "info") {
 function clearMessage() {
   if (!els.messageBox) return;
   els.messageBox.textContent = "";
-  els.messageBox.className = "message hidden";
-}
+  els.messageBox.className = "message hidden"; }
 
 function setScanStatus(text) {
   if (els.scanStatus) {
@@ -69,16 +67,14 @@ function sanitize(str = "") {
 }
 
 function normalize(value) {
-  return String(value || "").trim().toLowerCase();
-}
+  return String(value || "").trim().toLowerCase(); }
 
 function saveFilters() {
   const payload = {};
   filterKeys.forEach((key) => {
     if (els[key]) payload[key] = els[key].value;
   });
-  localStorage.setItem("biblioteca-filters", JSON.stringify(payload));
-}
+  localStorage.setItem("biblioteca-filters", JSON.stringify(payload)); }
 
 function loadFilters() {
   const raw = localStorage.getItem("biblioteca-filters");
@@ -97,8 +93,7 @@ function loadFilters() {
 }
 
 function hasActiveFilters() {
-  return filterKeys.some((key) => normalize(els[key]?.value));
-}
+  return filterKeys.some((key) => normalize(els[key]?.value)); }
 
 function showBooks() {
   booksVisible = true;
@@ -144,8 +139,7 @@ function clearScanArea() {
   if (els.scanImageInput) els.scanImageInput.value = "";
   if (els.scanPreview) els.scanPreview.src = "";
   if (els.scanPreviewWrapper) els.scanPreviewWrapper.classList.add("hidden");
-  setScanStatus("Nessuna scansione effettuata.");
-}
+  setScanStatus("Nessuna scansione effettuata."); }
 
 function sortBooks(data) {
   const sorted = [...data];
@@ -337,8 +331,7 @@ function editBook(id) {
   if (els.status) els.status.value = book.status || "Da leggere";
   if (els.notes) els.notes.value = book.notes || "";
 
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
+  window.scrollTo({ top: 0, behavior: "smooth" }); }
 
 async function deleteBook(id) {
   const confirmed = window.confirm("Vuoi eliminare questo libro?");
@@ -359,19 +352,15 @@ async function deleteBook(id) {
 }
 
 function fillFieldsFromBookData({ title = "", author = "", genre = "" }) {
-  if (title && els.title && !els.title.value.trim()) {
-    els.title.value = title;
-  } else if (title && els.title) {
+  if (title && els.title) {
     els.title.value = title;
   }
 
-  if (author && els.author && !els.author.value.trim()) {
-    els.author.value = author;
-  } else if (author && els.author) {
+  if (author && els.author) {
     els.author.value = author;
   }
 
-  if (genre && els.genre && !els.genre.value.trim()) {
+  if (genre && els.genre) {
     els.genre.value = genre;
   }
 }
@@ -419,7 +408,7 @@ async function detectIsbnFromImage(file) {
         }
       }
     } catch {
-      // prosegue con OCR
+      // fallback OCR
     }
   }
 
@@ -451,31 +440,20 @@ async function runOcr(file) {
 function parseCoverText(text) {
   const lines = String(text || "")
     .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 1)
-    .filter((line) => !/^\d+$/.test(line))
-    .filter((line) => !/^isbn/i.test(line))
-    .filter((line) => !/^ediz/i.test(line))
-    .filter((line) => !/^volume/i.test(line));
+    .map((l) => l.trim())
+    .filter((l) => l.length > 2)
+    .filter((l) => !/^\d+$/.test(l))
+    .filter((l) => !/^isbn/i.test(l));
 
-  if (!lines.length) {
-    return { title: "", author: "" };
-  }
+  const candidates = lines
+    .filter((l) => l.length < 60)
+    .slice(0, 3);
 
-  const shortUseful = lines.filter((line) => line.length <= 80);
-
-  const title = shortUseful[0] || lines[0] || "";
-  let author = "";
-
-  if (shortUseful.length > 1) {
-    author = shortUseful[1];
-  }
-
-  if (/di\s+/i.test(author)) {
-    author = author.replace(/^di\s+/i, "").trim();
-  }
-
-  return { title, author };
+  return {
+    raw: candidates.join(" "),
+    title: candidates[0] || "",
+    author: candidates[1] || ""
+  };
 }
 
 async function lookupBookByIsbn(isbn) {
@@ -514,6 +492,50 @@ async function lookupBookByTitleAuthor(title, author) {
   };
 }
 
+async function fileToBase64(file) {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function analyzeCoverWithAI(file) {
+  const endpoint = window.AI_SCAN_ENDPOINT;
+  if (!endpoint) return null;
+
+  const base64Image = await fileToBase64(file);
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      image_base64: base64Image,
+      mime_type: file.type || "image/jpeg",
+      prompt: "Analizza la copertina di un libro. Estrai se possibile titolo, autore e genere. Rispondi solo in JSON con chiavi: title, author, genre."
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Servizio AI non disponibile.");
+  }
+
+  const data = await response.json();
+
+  return {
+    title: data.title || "",
+    author: data.author || "",
+    genre: data.genre || ""
+  };
+}
+
 async function handleScanFile(file) {
   if (!file) return;
 
@@ -533,31 +555,45 @@ async function handleScanFile(file) {
     let isbn = await detectIsbnFromImage(file);
 
     if (!isbn) {
-      setScanStatus("ISBN non trovato. Provo con OCR sulla foto...");
+      setScanStatus("ISBN non trovato. Provo con OCR...");
       const ocrText = await runOcr(file);
 
       isbn = extractIsbnFromText(ocrText);
       if (isbn) {
         setScanStatus(`ISBN trovato via OCR: ${isbn}. Recupero i dati...`);
       } else {
-        setScanStatus("ISBN non trovato. Provo a leggere titolo e autore dalla copertina...");
+        setScanStatus("ISBN non trovato. Provo prima con OCR copertina...");
         const guessed = parseCoverText(ocrText);
         let found = null;
 
-        if (guessed.title || guessed.author) {
+        if (guessed.raw) {
+          found = await lookupBookByTitleAuthor(guessed.raw, "");
+        }
+
+        if (!found && guessed.title) {
           found = await lookupBookByTitleAuthor(guessed.title, guessed.author);
         }
 
         if (found) {
           fillFieldsFromBookData(found);
           setScanStatus("Copertina letta. Controlla i campi e correggi se serve.");
-          showMessage("Dati letti dalla copertina. Verifica prima di salvare.", "success");
+          showMessage("Dati trovati dalla copertina. Verifica prima di salvare.", "success");
+          return;
+        }
+
+        setScanStatus("OCR classico non basta. Provo con AI...");
+        const aiResult = await analyzeCoverWithAI(file);
+
+        if (aiResult && (aiResult.title || aiResult.author || aiResult.genre)) {
+          fillFieldsFromBookData(aiResult);
+          setScanStatus("AI completata. Controlla i campi e correggi se serve.");
+          showMessage("Dati trovati con AI. Verifica prima di salvare.", "success");
           return;
         }
 
         fillFieldsFromBookData(guessed);
-        setScanStatus("Ho letto qualcosa dalla copertina, ma non sono sicuro. Controlla i campi.");
-        showMessage("Riconoscimento copertina parziale. Controlla e correggi i campi.", "info");
+        setScanStatus("Riconoscimento parziale. Controlla i campi.");
+        showMessage("Ho trovato solo dati parziali. Controlla e correggi.", "info");
         return;
       }
     }
@@ -571,7 +607,7 @@ async function handleScanFile(file) {
       return;
     }
 
-    setScanStatus(`ISBN trovato (${isbn}), ma nessun risultato online. Inserisci i dati a mano.`);
+    setScanStatus(`ISBN trovato (${isbn}), ma nessun risultato online.`);
     showMessage("ISBN letto, ma non ho trovato il libro online.", "info");
   } catch (error) {
     setScanStatus("Errore durante la scansione.");
@@ -680,3 +716,4 @@ function bootstrap() {
 }
 
 bootstrap();
+
