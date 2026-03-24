@@ -4,6 +4,7 @@ let booksVisible = false;
 let currentPage = 1;
 let pageSize = 20;
 let currentSort = "recent";
+let tesseractLoaderPromise = null;
 
 const els = {
   messageBox: document.getElementById("messageBox"),
@@ -37,7 +38,7 @@ const els = {
   scanStatus: document.getElementById("scanStatus")
 };
 
-const filterKeys = ["searchAll", "fTitle", "fAuthor", "fGenre", "fStatus", "fNotes"]; let tesseractLoaderPromise = null;
+const filterKeys = ["searchAll", "fTitle", "fAuthor", "fGenre", "fStatus", "fNotes"];
 
 function showMessage(text, type = "info") {
   if (!els.messageBox) return;
@@ -49,11 +50,12 @@ function showMessage(text, type = "info") {
 function clearMessage() {
   if (!els.messageBox) return;
   els.messageBox.textContent = "";
-  els.messageBox.className = "message hidden"; }
+  els.messageBox.className = "message hidden";
+}
 
 function setScanStatus(text) {
   if (els.scanStatus) {
-    els.scanStatus.textContent = text;
+    els.scanStatus.textContent = text || "";
   }
 }
 
@@ -67,33 +69,41 @@ function sanitize(str = "") {
 }
 
 function normalize(value) {
-  return String(value || "").trim().toLowerCase(); }
+  return String(value || "").trim().toLowerCase();
+}
 
 function saveFilters() {
-  const payload = {};
-  filterKeys.forEach((key) => {
-    if (els[key]) payload[key] = els[key].value;
-  });
-  localStorage.setItem("biblioteca-filters", JSON.stringify(payload)); }
+  try {
+    const payload = {};
+    filterKeys.forEach((key) => {
+      if (els[key]) payload[key] = els[key].value;
+    });
+    localStorage.setItem("biblioteca-filters", JSON.stringify(payload));
+  } catch (error) {
+    console.warn("Impossibile salvare i filtri", error);
+  }
+}
 
 function loadFilters() {
-  const raw = localStorage.getItem("biblioteca-filters");
-  if (!raw) return;
-
   try {
+    const raw = localStorage.getItem("biblioteca-filters");
+    if (!raw) return;
+
     const parsed = JSON.parse(raw);
     filterKeys.forEach((key) => {
       if (els[key] && parsed[key] !== undefined) {
         els[key].value = parsed[key];
       }
     });
-  } catch {
+  } catch (error) {
+    console.warn("Filtri non validi, li rimuovo", error);
     localStorage.removeItem("biblioteca-filters");
   }
 }
 
 function hasActiveFilters() {
-  return filterKeys.some((key) => normalize(els[key]?.value)); }
+  return filterKeys.some((key) => normalize(els[key]?.value));
+}
 
 function showBooks() {
   booksVisible = true;
@@ -114,17 +124,9 @@ function resetFilters() {
   currentPage = 1;
   hideBooks();
 
-  if (els.resultsCount) {
-    els.resultsCount.textContent = "0 libri";
-  }
-
-  if (els.books) {
-    els.books.innerHTML = "";
-  }
-
-  if (els.pageInfo) {
-    els.pageInfo.textContent = "Pagina 1 di 1";
-  }
+  if (els.resultsCount) els.resultsCount.textContent = "0 libri";
+  if (els.books) els.books.innerHTML = "";
+  if (els.pageInfo) els.pageInfo.textContent = "Pagina 1 di 1";
 }
 
 function clearForm() {
@@ -140,10 +142,11 @@ function clearScanArea() {
   if (els.scanImageInput) els.scanImageInput.value = "";
   if (els.scanPreview) els.scanPreview.src = "";
   if (els.scanPreviewWrapper) els.scanPreviewWrapper.classList.add("hidden");
-  setScanStatus("Nessuna scansione effettuata."); }
+  setScanStatus("Nessuna scansione effettuata.");
+}
 
 function sortBooks(data) {
-  const sorted = [...data];
+  const sorted = [...(data || [])];
 
   if (currentSort === "title-asc") {
     sorted.sort((a, b) => normalize(a.title).localeCompare(normalize(b.title), "it"));
@@ -174,7 +177,7 @@ function applyClientFilters(data) {
 
   saveFilters();
 
-  return data.filter((book) => {
+  return (data || []).filter((book) => {
     const haystack = normalize(
       [book.title, book.author, book.genre, book.status, book.notes].join(" ")
     );
@@ -245,8 +248,8 @@ function renderBooks(data) {
         <td>${sanitize(book.status || "")}</td>
         <td>${sanitize(book.notes || "")}</td>
         <td class="row-actions">
-          <button class="secondary" data-edit="${book.id}">Modifica</button>
-          <button class="danger" data-delete="${book.id}">Elimina</button>
+          <button type="button" class="secondary" data-edit="${sanitize(book.id || "")}">Modifica</button>
+          <button type="button" class="danger" data-delete="${sanitize(book.id || "")}">Elimina</button>
         </td>
       </tr>
     `)
@@ -256,18 +259,28 @@ function renderBooks(data) {
 async function fetchBooks() {
   clearMessage();
 
-  const { data, error } = await sb
-    .from("books")
-    .select("id, title, author, genre, status, notes, created_at")
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    showMessage(`Errore caricamento libri: ${error.message}`, "error");
+  if (typeof sb === "undefined" || !sb) {
+    showMessage("Supabase non inizializzato. Controlla il file di configurazione.", "error");
     return;
   }
 
-  allBooks = data || [];
-  renderBooks(allBooks);
+  try {
+    const { data, error } = await sb
+      .from("books")
+      .select("id, title, author, genre, status, notes, created_at")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      showMessage(`Errore caricamento libri: ${error.message}`, "error");
+      return;
+    }
+
+    allBooks = data || [];
+    renderBooks(allBooks);
+  } catch (error) {
+    console.error("Errore fetchBooks:", error);
+    showMessage("Errore imprevisto durante il caricamento dei libri.", "error");
+  }
 }
 
 async function saveBook() {
@@ -284,45 +297,49 @@ async function saveBook() {
     return;
   }
 
-  const payload = {
-    title,
-    author,
-    genre,
-    status,
-    notes
-  };
-
-  let response;
-  const wasEditing = !!editingBookId;
-
-  if (editingBookId) {
-    response = await sb
-      .from("books")
-      .update(payload)
-      .eq("id", editingBookId)
-      .select();
-  } else {
-    response = await sb
-      .from("books")
-      .insert([payload])
-      .select();
-  }
-
-  if (response.error) {
-    showMessage(`Errore salvataggio: ${response.error.message}`, "error");
+  if (typeof sb === "undefined" || !sb) {
+    showMessage("Supabase non inizializzato. Controlla il file di configurazione.", "error");
     return;
   }
 
-  clearForm();
-  clearScanArea();
-  showMessage(wasEditing ? "Libro aggiornato." : "Libro salvato.", "success");
-  showBooks();
-  currentPage = 1;
-  await fetchBooks();
+  const payload = { title, author, genre, status, notes };
+  const wasEditing = !!editingBookId;
+
+  try {
+    let response;
+
+    if (editingBookId) {
+      response = await sb
+        .from("books")
+        .update(payload)
+        .eq("id", editingBookId)
+        .select();
+    } else {
+      response = await sb
+        .from("books")
+        .insert([payload])
+        .select();
+    }
+
+    if (response.error) {
+      showMessage(`Errore salvataggio: ${response.error.message}`, "error");
+      return;
+    }
+
+    clearForm();
+    clearScanArea();
+    showMessage(wasEditing ? "Libro aggiornato." : "Libro salvato.", "success");
+    showBooks();
+    currentPage = 1;
+    await fetchBooks();
+  } catch (error) {
+    console.error("Errore saveBook:", error);
+    showMessage("Errore imprevisto durante il salvataggio.", "error");
+  }
 }
 
 function editBook(id) {
-  const book = allBooks.find((item) => item.id === id);
+  const book = allBooks.find((item) => String(item.id) === String(id));
   if (!book) return;
 
   editingBookId = book.id;
@@ -332,45 +349,49 @@ function editBook(id) {
   if (els.status) els.status.value = book.status || "Da leggere";
   if (els.notes) els.notes.value = book.notes || "";
 
-  window.scrollTo({ top: 0, behavior: "smooth" }); }
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
 
 async function deleteBook(id) {
   const confirmed = window.confirm("Vuoi eliminare questo libro?");
   if (!confirmed) return;
 
-  const { error } = await sb
-    .from("books")
-    .delete()
-    .eq("id", id);
-
-  if (error) {
-    showMessage(`Errore eliminazione: ${error.message}`, "error");
+  if (typeof sb === "undefined" || !sb) {
+    showMessage("Supabase non inizializzato. Controlla il file di configurazione.", "error");
     return;
   }
 
-  showMessage("Libro eliminato.", "success");
-  await fetchBooks();
+  try {
+    const { error } = await sb
+      .from("books")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      showMessage(`Errore eliminazione: ${error.message}`, "error");
+      return;
+    }
+
+    showMessage("Libro eliminato.", "success");
+    await fetchBooks();
+  } catch (error) {
+    console.error("Errore deleteBook:", error);
+    showMessage("Errore imprevisto durante l'eliminazione.", "error");
+  }
 }
 
 function fillFieldsFromBookData({ title = "", author = "", genre = "" }) {
-  if (title && els.title) {
-    els.title.value = title;
-  }
-
-  if (author && els.author) {
-    els.author.value = author;
-  }
-
-  if (genre && els.genre) {
-    els.genre.value = genre;
-  }
+  if (title && els.title) els.title.value = title;
+  if (author && els.author) els.author.value = author;
+  if (genre && els.genre) els.genre.value = genre;
 }
 
 async function fileToImageBitmap(file) {
   if (!("createImageBitmap" in window)) return null;
   try {
     return await createImageBitmap(file);
-  } catch {
+  } catch (error) {
+    console.warn("createImageBitmap non disponibile o fallita", error);
     return null;
   }
 }
@@ -383,7 +404,7 @@ function extractIsbnFromText(text) {
   const match13 = cleaned.match(/97[89]\d{10}/);
   if (match13) return match13[0];
 
-  const match10 = cleaned.match(/\b\d{9}[0-9X]\b/);
+  const match10 = cleaned.match(/\d{9}[0-9X]/);
   if (match10) return match10[0];
 
   return null;
@@ -408,8 +429,8 @@ async function detectIsbnFromImage(file) {
           }
         }
       }
-    } catch {
-      // fallback OCR
+    } catch (error) {
+      console.warn("BarcodeDetector fallito", error);
     }
   }
 
@@ -423,8 +444,20 @@ async function loadTesseract() {
     tesseractLoaderPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
       script.src = "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js";
-      script.onload = () => resolve(window.Tesseract);
-      script.onerror = reject;
+      script.async = true;
+
+      script.onload = () => {
+        if (window.Tesseract) {
+          resolve(window.Tesseract);
+        } else {
+          reject(new Error("Tesseract caricato ma non disponibile."));
+        }
+      };
+
+      script.onerror = () => {
+        reject(new Error("Impossibile caricare Tesseract."));
+      };
+
       document.head.appendChild(script);
     });
   }
@@ -434,8 +467,14 @@ async function loadTesseract() {
 
 async function runOcr(file) {
   const Tesseract = await loadTesseract();
-  const result = await Tesseract.recognize(file, "ita+eng");
-  return result?.data?.text || "";
+
+  try {
+    const result = await Tesseract.recognize(file, "eng");
+    return result?.data?.text || "";
+  } catch (error) {
+    console.warn("OCR fallito", error);
+    throw new Error("OCR non riuscito.");
+  }
 }
 
 function parseCoverText(text) {
@@ -447,8 +486,8 @@ function parseCoverText(text) {
     .filter((l) => !/^isbn/i.test(l));
 
   const candidates = lines
-    .filter((l) => l.length < 60)
-    .slice(0, 3);
+    .filter((l) => l.length < 80)
+    .slice(0, 4);
 
   return {
     raw: candidates.join(" "),
@@ -457,13 +496,23 @@ function parseCoverText(text) {
   };
 }
 
+async function fetchJsonWithTimeout(url, timeout = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return null;
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function lookupBookByIsbn(isbn) {
   const url = `https://openlibrary.org/search.json?isbn=${encodeURIComponent(isbn)}`;
-  const response = await fetch(url);
-  if (!response.ok) return null;
-
-  const data = await response.json();
-  const doc = data.docs?.[0];
+  const data = await fetchJsonWithTimeout(url, 10000);
+  const doc = data?.docs?.[0];
   if (!doc) return null;
 
   return {
@@ -479,11 +528,8 @@ async function lookupBookByTitleAuthor(title, author) {
   if (author) params.set("author", author);
 
   const url = `https://openlibrary.org/search.json?${params.toString()}`;
-  const response = await fetch(url);
-  if (!response.ok) return null;
-
-  const data = await response.json();
-  const doc = data.docs?.[0];
+  const data = await fetchJsonWithTimeout(url, 10000);
+  const doc = data?.docs?.[0];
   if (!doc) return null;
 
   return {
@@ -494,14 +540,16 @@ async function lookupBookByTitleAuthor(title, author) {
 }
 
 async function fileToBase64(file) {
-  return await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
+
     reader.onload = () => {
       const result = String(reader.result || "");
       const base64 = result.includes(",") ? result.split(",")[1] : result;
       resolve(base64);
     };
-    reader.onerror = reject;
+
+    reader.onerror = () => reject(new Error("Errore lettura file."));
     reader.readAsDataURL(file);
   });
 }
@@ -546,94 +594,88 @@ async function handleScanFile(file) {
   clearMessage();
   setScanStatus("Analisi immagine in corso...");
 
-  const previewUrl = URL.createObjectURL(file);
-  if (els.scanPreview) {
-    els.scanPreview.src = previewUrl;
-  }
-  if (els.scanPreviewWrapper) {
-    els.scanPreviewWrapper.classList.remove("hidden");
-  }
+  let previewUrl = "";
 
   try {
+    previewUrl = URL.createObjectURL(file);
+    if (els.scanPreview) els.scanPreview.src = previewUrl;
+    if (els.scanPreviewWrapper) els.scanPreviewWrapper.classList.remove("hidden");
+
     setScanStatus("Provo a leggere il codice ISBN...");
     let isbn = await detectIsbnFromImage(file);
 
+    let ocrText = "";
+
     if (!isbn) {
       setScanStatus("ISBN non trovato. Provo con OCR...");
-      const ocrText = await runOcr(file);
-
+      ocrText = await runOcr(file);
       isbn = extractIsbnFromText(ocrText);
-
-      if (isbn) {
-        setScanStatus(`ISBN trovato via OCR: ${isbn}. Recupero i dati...`);
-      } else {
-        setScanStatus("ISBN non trovato. Provo prima con OCR copertina...");
-        const guessed = parseCoverText(ocrText);
-        let found = null;
-
-        if (guessed.raw) {
-          found = await lookupBookByTitleAuthor(guessed.raw, "");
-        }
-
-        if (!found && guessed.title) {
-          found = await lookupBookByTitleAuthor(guessed.title, guessed.author);
-        }
-
-        if (found) {
-          fillFieldsFromBookData(found);
-          setScanStatus("Copertina letta. Controlla i campi e correggi se serve.");
-          showMessage("Dati trovati dalla copertina. Verifica prima di salvare.", "success");
-          return;
-        }
-
-        setScanStatus("OCR classico non basta. Provo con AI...");
-        const aiResult = await analyzeCoverWithAI(file);
-
-        if (aiResult && (aiResult.title || aiResult.author || aiResult.genre)) {
-          fillFieldsFromBookData(aiResult);
-          setScanStatus("AI completata. Controlla i campi e correggi se serve.");
-          showMessage("Dati trovati con AI. Verifica prima di salvare.", "success");
-          return;
-        }
-
-        fillFieldsFromBookData(guessed);
-        setScanStatus("Riconoscimento parziale. Controlla i campi.");
-        showMessage("Ho trovato solo dati parziali. Controlla e correggi.", "info");
-        return;
-      }
     }
 
-    const foundByIsbn = await lookupBookByIsbn(isbn);
+    if (isbn) {
+      setScanStatus(`ISBN trovato (${isbn}). Recupero i dati...`);
+      const foundByIsbn = await lookupBookByIsbn(isbn);
 
-    if (foundByIsbn) {
-      fillFieldsFromBookData(foundByIsbn);
-      setScanStatus(`ISBN trovato (${isbn}). Campi compilati automaticamente.`);
-      showMessage("Libro riconosciuto da ISBN. Controlla i campi e salva.", "success");
+      if (foundByIsbn) {
+        fillFieldsFromBookData(foundByIsbn);
+        setScanStatus(`ISBN trovato (${isbn}). Campi compilati automaticamente.`);
+        showMessage("Libro riconosciuto da ISBN. Controlla i campi e salva.", "success");
+        return;
+      }
+
+      setScanStatus(`ISBN trovato (${isbn}), ma nessun risultato online.`);
+      showMessage("ISBN letto, ma non ho trovato il libro online.", "info");
       return;
     }
 
-    setScanStatus(`ISBN trovato (${isbn}), ma nessun risultato online.`);
-    showMessage("ISBN letto, ma non ho trovato il libro online.", "info");
+    if (!ocrText) {
+      setScanStatus("Provo a leggere il testo della copertina...");
+      ocrText = await runOcr(file);
+    }
+
+    const guessed = parseCoverText(ocrText);
+    let found = null;
+
+    if (guessed.raw) {
+      found = await lookupBookByTitleAuthor(guessed.raw, "");
+    }
+
+    if (!found && guessed.title) {
+      found = await lookupBookByTitleAuthor(guessed.title, guessed.author);
+    }
+
+    if (found) {
+      fillFieldsFromBookData(found);
+      setScanStatus("Copertina letta. Controlla i campi e correggi se serve.");
+      showMessage("Dati trovati dalla copertina. Verifica prima di salvare.", "success");
+      return;
+    }
+
+    setScanStatus("OCR classico non basta. Provo con AI...");
+    const aiResult = await analyzeCoverWithAI(file);
+
+    if (aiResult && (aiResult.title || aiResult.author || aiResult.genre)) {
+      fillFieldsFromBookData(aiResult);
+      setScanStatus("AI completata. Controlla i campi e correggi se serve.");
+      showMessage("Dati trovati con AI. Verifica prima di salvare.", "success");
+      return;
+    }
+
+    fillFieldsFromBookData(guessed);
+    setScanStatus("Riconoscimento parziale. Controlla i campi.");
+    showMessage("Ho trovato solo dati parziali. Controlla e correggi.", "info");
   } catch (error) {
     console.error("Errore scansione:", error);
     setScanStatus(error.message || "Errore durante la scansione.");
     showMessage(error.message || "Errore durante la scansione del libro.", "error");
+  } finally {
+    if (previewUrl) {
+      setTimeout(() => URL.revokeObjectURL(previewUrl), 1000);
+    }
   }
 }
 
-function bootstrap() {
-  loadFilters();
-  hideBooks();
-  clearScanArea();
-
-  if (els.pageSizeSelect) {
-    pageSize = Number(els.pageSizeSelect.value) || 20;
-  }
-
-  if (els.sortSelect) {
-    currentSort = els.sortSelect.value || "recent";
-  }
-
+function bindStaticEvents() {
   document.getElementById("saveBookBtn")?.addEventListener("click", saveBook);
   document.getElementById("clearFormBtn")?.addEventListener("click", clearForm);
   document.getElementById("refreshBtn")?.addEventListener("click", fetchBooks);
@@ -652,7 +694,10 @@ function bootstrap() {
     renderBooks(allBooks);
   });
 
-  document.getElementById("hideBooksBtn")?.addEventListener("click", hideBooks);
+  document.getElementById("hideBooksBtn")?.addEventListener("click", () => {
+    hideBooks();
+    renderBooks(allBooks);
+  });
 
   els.pageSizeSelect?.addEventListener("change", () => {
     pageSize = Number(els.pageSizeSelect.value) || 20;
@@ -696,8 +741,11 @@ function bootstrap() {
   });
 
   els.books?.addEventListener("click", (event) => {
-    const editId = event.target.getAttribute("data-edit");
-    const deleteId = event.target.getAttribute("data-delete");
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+
+    const editId = target.getAttribute("data-edit");
+    const deleteId = target.getAttribute("data-delete");
 
     if (editId) editBook(editId);
     if (deleteId) deleteBook(deleteId);
@@ -712,13 +760,33 @@ function bootstrap() {
   });
 
   els.scanImageInput?.addEventListener("change", async (event) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      await handleScanFile(file);
-    }
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    const file = input.files?.[0];
+    if (file) await handleScanFile(file);
   });
+}
 
-  fetchBooks();
+async function bootstrap() {
+  try {
+    loadFilters();
+    hideBooks();
+    clearScanArea();
+
+    if (els.pageSizeSelect) {
+      pageSize = Number(els.pageSizeSelect.value) || 20;
+    }
+
+    if (els.sortSelect) {
+      currentSort = els.sortSelect.value || "recent";
+    }
+
+    bindStaticEvents();
+    await fetchBooks();
+  } catch (error) {
+    console.error("Errore bootstrap:", error);
+    showMessage("Errore durante l'avvio dell'app.", "error");
+  }
 }
 
 bootstrap();
