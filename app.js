@@ -386,12 +386,155 @@ function fillFieldsFromBookData({ title = "", author = "", genre = "" }) {
   if (genre && els.genre) els.genre.value = genre;
 }
 
-async function fileToImageBitmap(file) {
-  if (!("createImageBitmap" in window)) return null;
+async function fileToImageElement(file) {
+  return await new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Impossibile leggere l'immagine."));
+    };
+
+    img.src = url;
+  });
+}
+
+function drawImageToCanvas(img, crop = null) {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+
+  const fullWidth = img.naturalWidth || img.width;
+  const fullHeight = img.naturalHeight || img.height;
+
+  const sx = crop?.sx || 0;
+  const sy = crop?.sy || 0;
+  const sw = crop?.sw || fullWidth;
+  const sh = crop?.sh || fullHeight;
+
+  canvas.width = sw;
+  canvas.height = sh;
+
+  ctx.drawImage(
+    img,
+    sx,
+    sy,
+    sw,
+    sh,
+    0,
+    0,
+    sw,
+    sh
+  );
+
+  return canvas;
+}
+
+async function detectBarcodeFromSource(source) {
+  if (!("BarcodeDetector" in window)) return null;
+
   try {
-    return await createImageBitmap(file);
+    const detector = new window.BarcodeDetector({
+      formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"]
+    });
+
+    const codes = await detector.detect(source);
+    if (!codes || !codes.length) return null;
+
+    for (const code of codes) {
+      const raw = String(code.rawValue || "").replace(/[^\dXx]/g, "");
+      if (/^(97[89]\d{10}|\d{9}[0-9Xx])$/.test(raw)) {
+        return raw.toUpperCase();
+      }
+    }
+
+    return null;
   } catch (error) {
-    console.warn("createImageBitmap non disponibile o fallita", error);
+    console.warn("BarcodeDetector error:", error);
+    return null;
+  }
+}
+
+function downscaleCanvasIfNeeded(sourceCanvas, maxWidth = 1600) {
+  if (!sourceCanvas || sourceCanvas.width <= maxWidth) {
+    return sourceCanvas;
+  }
+
+  const ratio = maxWidth / sourceCanvas.width;
+  const targetWidth = Math.round(sourceCanvas.width * ratio);
+  const targetHeight = Math.round(sourceCanvas.height * ratio);
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+
+  ctx.drawImage(sourceCanvas, 0, 0, targetWidth, targetHeight);
+  return canvas;
+}
+
+function canvasToBlob(canvas, type = "image/jpeg", quality = 0.92) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("Impossibile convertire il canvas in immagine."));
+    }, type, quality);
+  });
+}
+
+async function detectIsbnFromImage(file) {
+  try {
+    const img = await fileToImageElement(file);
+    const width = img.naturalWidth || img.width;
+    const height = img.naturalHeight || img.height;
+
+    const attempts = [];
+
+    attempts.push(
+      drawImageToCanvas(img)
+    );
+
+    attempts.push(
+      drawImageToCanvas(img, {
+        sx: 0,
+        sy: Math.floor(height * 0.5),
+        sw: width,
+        sh: Math.floor(height * 0.5)
+      })
+    );
+
+    attempts.push(
+      drawImageToCanvas(img, {
+        sx: Math.floor(width * 0.1),
+        sy: Math.floor(height * 0.62),
+        sw: Math.floor(width * 0.8),
+        sh: Math.floor(height * 0.28)
+      })
+    );
+
+    attempts.push(
+      drawImageToCanvas(img, {
+        sx: Math.floor(width * 0.18),
+        sy: Math.floor(height * 0.68),
+        sw: Math.floor(width * 0.64),
+        sh: Math.floor(height * 0.2)
+      })
+    );
+
+    for (const attemptCanvas of attempts) {
+      const optimizedCanvas = downscaleCanvasIfNeeded(attemptCanvas, 1600);
+      const isbn = await detectBarcodeFromSource(optimizedCanvas);
+      if (isbn) return isbn;
+    }
+
+    return null;
+  } catch (error) {
+    console.warn("detectIsbnFromImage fallita:", error);
     return null;
   }
 }
@@ -406,33 +549,6 @@ function extractIsbnFromText(text) {
 
   const match10 = cleaned.match(/\d{9}[0-9X]/);
   if (match10) return match10[0];
-
-  return null;
-}
-
-async function detectIsbnFromImage(file) {
-  const bitmap = await fileToImageBitmap(file);
-  if (!bitmap) return null;
-
-  if ("BarcodeDetector" in window) {
-    try {
-      const detector = new window.BarcodeDetector({
-        formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"]
-      });
-
-      const codes = await detector.detect(bitmap);
-      if (codes && codes.length) {
-        for (const code of codes) {
-          const raw = String(code.rawValue || "").replace(/[^\dXx]/g, "");
-          if (/^(97[89]\d{10}|\d{9}[0-9Xx])$/.test(raw)) {
-            return raw.toUpperCase();
-          }
-        }
-      }
-    } catch (error) {
-      console.warn("BarcodeDetector fallito", error);
-    }
-  }
 
   return null;
 }
@@ -465,16 +581,33 @@ async function loadTesseract() {
   return tesseractLoaderPromise;
 }
 
-async function runOcr(file) {
+async function runOcr(input) {
   const Tesseract = await loadTesseract();
 
   try {
-    const result = await Tesseract.recognize(file, "eng");
+    const result = await Tesseract.recognize(input, "eng");
     return result?.data?.text || "";
   } catch (error) {
     console.warn("OCR fallito", error);
     throw new Error("OCR non riuscito.");
   }
+}
+
+async function runOcrForIsbn(file) {
+  const img = await fileToImageElement(file);
+  const width = img.naturalWidth || img.width;
+  const height = img.naturalHeight || img.height;
+
+  const lowerCanvas = drawImageToCanvas(img, {
+    sx: 0,
+    sy: Math.floor(height * 0.55),
+    sw: width,
+    sh: Math.floor(height * 0.45)
+  });
+
+  const optimizedCanvas = downscaleCanvasIfNeeded(lowerCanvas, 1800);
+  const blob = await canvasToBlob(optimizedCanvas, "image/jpeg", 0.95);
+  return await runOcr(blob);
 }
 
 function parseCoverText(text) {
@@ -598,8 +731,14 @@ async function handleScanFile(file) {
 
   try {
     previewUrl = URL.createObjectURL(file);
-    if (els.scanPreview) els.scanPreview.src = previewUrl;
-    if (els.scanPreviewWrapper) els.scanPreviewWrapper.classList.remove("hidden");
+
+    if (els.scanPreview) {
+      els.scanPreview.src = previewUrl;
+    }
+
+    if (els.scanPreviewWrapper) {
+      els.scanPreviewWrapper.classList.remove("hidden");
+    }
 
     setScanStatus("Provo a leggere il codice ISBN...");
     let isbn = await detectIsbnFromImage(file);
@@ -607,13 +746,13 @@ async function handleScanFile(file) {
     let ocrText = "";
 
     if (!isbn) {
-      setScanStatus("ISBN non trovato. Provo con OCR...");
-      ocrText = await runOcr(file);
+      setScanStatus("Barcode non trovato. Provo OCR mirato per ISBN...");
+      ocrText = await runOcrForIsbn(file);
       isbn = extractIsbnFromText(ocrText);
     }
 
     if (isbn) {
-      setScanStatus(`ISBN trovato (${isbn}). Recupero i dati...`);
+      setScanStatus(`ISBN trovato (${isbn}). Recupero i dati online...`);
       const foundByIsbn = await lookupBookByIsbn(isbn);
 
       if (foundByIsbn) {
@@ -636,12 +775,12 @@ async function handleScanFile(file) {
     const guessed = parseCoverText(ocrText);
     let found = null;
 
-    if (guessed.raw) {
-      found = await lookupBookByTitleAuthor(guessed.raw, "");
+    if (guessed.title) {
+      found = await lookupBookByTitleAuthor(guessed.title, guessed.author);
     }
 
-    if (!found && guessed.title) {
-      found = await lookupBookByTitleAuthor(guessed.title, guessed.author);
+    if (!found && guessed.raw) {
+      found = await lookupBookByTitleAuthor(guessed.raw, "");
     }
 
     if (found) {
@@ -651,7 +790,7 @@ async function handleScanFile(file) {
       return;
     }
 
-    setScanStatus("OCR classico non basta. Provo con AI...");
+    setScanStatus("Metodi classici insufficienti. Provo con AI...");
     const aiResult = await analyzeCoverWithAI(file);
 
     if (aiResult && (aiResult.title || aiResult.author || aiResult.genre)) {
