@@ -80,6 +80,34 @@
               <textarea id="notes" rows="4" placeholder="Le tue note"></textarea>
             </label>
 
+            <section class="scan-box">
+              <div class="card-header">
+                <h3>Scansione libro</h3>
+                <p class="subtitle-small">
+                  Prova prima a leggere l’ISBN. Se non viene trovato, prova a leggere la copertina.
+                </p>
+              </div>
+
+              <div class="actions wrap">
+                <button id="scanBookBtn" type="button" class="secondary">Scansiona libro</button>
+                <button id="clearScanBtn" type="button" class="secondary">Rimuovi foto</button>
+              </div>
+
+              <input
+                id="scanImageInput"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                class="hidden"
+              />
+
+              <div id="scanPreviewWrapper" class="scan-preview hidden">
+                <img id="scanPreview" alt="Anteprima scansione libro" />
+              </div>
+
+              <p id="scanStatus" class="muted">Nessuna scansione effettuata.</p>
+            </section>
+
             <div class="actions wrap">
               <button id="saveBookBtn">Salva libro</button>
               <button id="clearFormBtn" class="secondary">Pulisci</button>
