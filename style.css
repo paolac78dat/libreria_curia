@@ -70,6 +70,12 @@ h1 {
   color: var(--muted);
 }
 
+.subtitle-small {
+  color: var(--muted);
+  font-size: 0.95rem;
+  margin-bottom: 0;
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -237,6 +243,37 @@ button:disabled {
   all: unset;
 }
 
+/* Scansione libro */
+.scan-box {
+  margin-top: 18px;
+  padding: 16px;
+  background: linear-gradient(180deg, #f8f9ff 0%, #f2f5ff 100%);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.scan-preview {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  background: #eef2ff;
+}
+
+.scan-preview img {
+  display: block;
+  width: 100%;
+  max-height: 340px;
+  object-fit: contain;
+  background: #eef2ff;
+}
+
+#scanStatus {
+  margin-top: 12px;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
 /* Tabella compatta */
 .table-wrap {
   overflow-x: auto;
@@ -356,6 +393,10 @@ button:disabled {
   .books-table {
     min-width: 760px;
   }
+
+  .scan-preview img {
+    max-height: 280px;
+  }
 }
 
 /* iPhone piccolo */
@@ -378,5 +419,13 @@ button:disabled {
 
   .books-table {
     min-width: 720px;
+  }
+
+  .scan-box {
+    padding: 14px;
+  }
+
+  .scan-preview img {
+    max-height: 220px;
   }
 }
