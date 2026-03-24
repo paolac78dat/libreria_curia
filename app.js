@@ -109,6 +109,7 @@ function resetFilters() {
   filterKeys.forEach((key) => {
     if (els[key]) els[key].value = "";
   });
+
   localStorage.removeItem("biblioteca-filters");
   currentPage = 1;
   hideBooks();
@@ -518,16 +519,19 @@ async function analyzeCoverWithAI(file) {
     },
     body: JSON.stringify({
       image_base64: base64Image,
-      mime_type: file.type || "image/jpeg",
-      prompt: "Analizza la copertina di un libro. Estrai se possibile titolo, autore e genere. Rispondi solo in JSON con chiavi: title, author, genre."
+      mime_type: file.type || "image/jpeg"
     })
   });
 
-  if (!response.ok) {
-    throw new Error("Servizio AI non disponibile.");
-  }
+  const data = await response.json().catch(() => ({}));
 
-  const data = await response.json();
+  if (!response.ok) {
+    const details =
+      data?.details ||
+      data?.error ||
+      `Errore server ${response.status}`;
+    throw new Error(details);
+  }
 
   return {
     title: data.title || "",
@@ -559,6 +563,7 @@ async function handleScanFile(file) {
       const ocrText = await runOcr(file);
 
       isbn = extractIsbnFromText(ocrText);
+
       if (isbn) {
         setScanStatus(`ISBN trovato via OCR: ${isbn}. Recupero i dati...`);
       } else {
@@ -610,7 +615,8 @@ async function handleScanFile(file) {
     setScanStatus(`ISBN trovato (${isbn}), ma nessun risultato online.`);
     showMessage("ISBN letto, ma non ho trovato il libro online.", "info");
   } catch (error) {
-    setScanStatus("Errore durante la scansione.");
+    console.error("Errore scansione:", error);
+    setScanStatus(error.message || "Errore durante la scansione.");
     showMessage(error.message || "Errore durante la scansione del libro.", "error");
   }
 }
@@ -716,4 +722,3 @@ function bootstrap() {
 }
 
 bootstrap();
-
