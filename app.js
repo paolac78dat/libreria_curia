@@ -422,7 +422,7 @@ async function loadTesseract() {
   if (!tesseractLoaderPromise) {
     tesseractLoaderPromise = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js";
+      script.src = https://unpkg.com/tesseract.js@5/dist/tesseract.min.js;
       script.onload = () => resolve(window.Tesseract);
       script.onerror = reject;
       document.head.appendChild(script);
