@@ -27,10 +27,18 @@ const els = {
   fAuthor: document.getElementById("fAuthor"),
   fGenre: document.getElementById("fGenre"),
   fStatus: document.getElementById("fStatus"),
-  fNotes: document.getElementById("fNotes")
+  fNotes: document.getElementById("fNotes"),
+
+  scanBookBtn: document.getElementById("scanBookBtn"),
+  clearScanBtn: document.getElementById("clearScanBtn"),
+  scanImageInput: document.getElementById("scanImageInput"),
+  scanPreviewWrapper: document.getElementById("scanPreviewWrapper"),
+  scanPreview: document.getElementById("scanPreview"),
+  scanStatus: document.getElementById("scanStatus")
 };
 
 const filterKeys = ["searchAll", "fTitle", "fAuthor", "fGenre", "fStatus", "fNotes"];
+let tesseractLoaderPromise = null;
 
 function showMessage(text, type = "info") {
   if (!els.messageBox) return;
@@ -43,6 +51,12 @@ function clearMessage() {
   if (!els.messageBox) return;
   els.messageBox.textContent = "";
   els.messageBox.className = "message hidden";
+}
+
+function setScanStatus(text) {
+  if (els.scanStatus) {
+    els.scanStatus.textContent = text;
+  }
 }
 
 function sanitize(str = "") {
@@ -124,6 +138,13 @@ function clearForm() {
   if (els.genre) els.genre.value = "";
   if (els.status) els.status.value = "Da leggere";
   if (els.notes) els.notes.value = "";
+}
+
+function clearScanArea() {
+  if (els.scanImageInput) els.scanImageInput.value = "";
+  if (els.scanPreview) els.scanPreview.src = "";
+  if (els.scanPreviewWrapper) els.scanPreviewWrapper.classList.add("hidden");
+  setScanStatus("Nessuna scansione effettuata.");
 }
 
 function sortBooks(data) {
@@ -298,6 +319,7 @@ async function saveBook() {
   }
 
   clearForm();
+  clearScanArea();
   showMessage(wasEditing ? "Libro aggiornato." : "Libro salvato.", "success");
   showBooks();
   currentPage = 1;
@@ -336,9 +358,231 @@ async function deleteBook(id) {
   await fetchBooks();
 }
 
+function fillFieldsFromBookData({ title = "", author = "", genre = "" }) {
+  if (title && els.title && !els.title.value.trim()) {
+    els.title.value = title;
+  } else if (title && els.title) {
+    els.title.value = title;
+  }
+
+  if (author && els.author && !els.author.value.trim()) {
+    els.author.value = author;
+  } else if (author && els.author) {
+    els.author.value = author;
+  }
+
+  if (genre && els.genre && !els.genre.value.trim()) {
+    els.genre.value = genre;
+  }
+}
+
+async function fileToImageBitmap(file) {
+  if (!("createImageBitmap" in window)) return null;
+  try {
+    return await createImageBitmap(file);
+  } catch {
+    return null;
+  }
+}
+
+function extractIsbnFromText(text) {
+  const cleaned = String(text || "")
+    .replace(/[\s\-]/g, "")
+    .toUpperCase();
+
+  const match13 = cleaned.match(/97[89]\d{10}/);
+  if (match13) return match13[0];
+
+  const match10 = cleaned.match(/\b\d{9}[0-9X]\b/);
+  if (match10) return match10[0];
+
+  return null;
+}
+
+async function detectIsbnFromImage(file) {
+  const bitmap = await fileToImageBitmap(file);
+  if (!bitmap) return null;
+
+  if ("BarcodeDetector" in window) {
+    try {
+      const detector = new window.BarcodeDetector({
+        formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"]
+      });
+
+      const codes = await detector.detect(bitmap);
+      if (codes && codes.length) {
+        for (const code of codes) {
+          const raw = String(code.rawValue || "").replace(/[^\dXx]/g, "");
+          if (/^(97[89]\d{10}|\d{9}[0-9Xx])$/.test(raw)) {
+            return raw.toUpperCase();
+          }
+        }
+      }
+    } catch {
+      // prosegue con OCR
+    }
+  }
+
+  return null;
+}
+
+async function loadTesseract() {
+  if (window.Tesseract) return window.Tesseract;
+
+  if (!tesseractLoaderPromise) {
+    tesseractLoaderPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js";
+      script.onload = () => resolve(window.Tesseract);
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+
+  return tesseractLoaderPromise;
+}
+
+async function runOcr(file) {
+  const Tesseract = await loadTesseract();
+  const result = await Tesseract.recognize(file, "ita+eng");
+  return result?.data?.text || "";
+}
+
+function parseCoverText(text) {
+  const lines = String(text || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 1)
+    .filter((line) => !/^\d+$/.test(line))
+    .filter((line) => !/^isbn/i.test(line))
+    .filter((line) => !/^ediz/i.test(line))
+    .filter((line) => !/^volume/i.test(line));
+
+  if (!lines.length) {
+    return { title: "", author: "" };
+  }
+
+  const shortUseful = lines.filter((line) => line.length <= 80);
+
+  const title = shortUseful[0] || lines[0] || "";
+  let author = "";
+
+  if (shortUseful.length > 1) {
+    author = shortUseful[1];
+  }
+
+  if (/di\s+/i.test(author)) {
+    author = author.replace(/^di\s+/i, "").trim();
+  }
+
+  return { title, author };
+}
+
+async function lookupBookByIsbn(isbn) {
+  const url = `https://openlibrary.org/search.json?isbn=${encodeURIComponent(isbn)}`;
+  const response = await fetch(url);
+  if (!response.ok) return null;
+
+  const data = await response.json();
+  const doc = data.docs?.[0];
+  if (!doc) return null;
+
+  return {
+    title: doc.title || "",
+    author: doc.author_name?.[0] || "",
+    genre: doc.subject?.[0] || ""
+  };
+}
+
+async function lookupBookByTitleAuthor(title, author) {
+  const params = new URLSearchParams();
+  if (title) params.set("title", title);
+  if (author) params.set("author", author);
+
+  const url = `https://openlibrary.org/search.json?${params.toString()}`;
+  const response = await fetch(url);
+  if (!response.ok) return null;
+
+  const data = await response.json();
+  const doc = data.docs?.[0];
+  if (!doc) return null;
+
+  return {
+    title: doc.title || title || "",
+    author: doc.author_name?.[0] || author || "",
+    genre: doc.subject?.[0] || ""
+  };
+}
+
+async function handleScanFile(file) {
+  if (!file) return;
+
+  clearMessage();
+  setScanStatus("Analisi immagine in corso...");
+
+  const previewUrl = URL.createObjectURL(file);
+  if (els.scanPreview) {
+    els.scanPreview.src = previewUrl;
+  }
+  if (els.scanPreviewWrapper) {
+    els.scanPreviewWrapper.classList.remove("hidden");
+  }
+
+  try {
+    setScanStatus("Provo a leggere il codice ISBN...");
+    let isbn = await detectIsbnFromImage(file);
+
+    if (!isbn) {
+      setScanStatus("ISBN non trovato. Provo con OCR sulla foto...");
+      const ocrText = await runOcr(file);
+
+      isbn = extractIsbnFromText(ocrText);
+      if (isbn) {
+        setScanStatus(`ISBN trovato via OCR: ${isbn}. Recupero i dati...`);
+      } else {
+        setScanStatus("ISBN non trovato. Provo a leggere titolo e autore dalla copertina...");
+        const guessed = parseCoverText(ocrText);
+        let found = null;
+
+        if (guessed.title || guessed.author) {
+          found = await lookupBookByTitleAuthor(guessed.title, guessed.author);
+        }
+
+        if (found) {
+          fillFieldsFromBookData(found);
+          setScanStatus("Copertina letta. Controlla i campi e correggi se serve.");
+          showMessage("Dati letti dalla copertina. Verifica prima di salvare.", "success");
+          return;
+        }
+
+        fillFieldsFromBookData(guessed);
+        setScanStatus("Ho letto qualcosa dalla copertina, ma non sono sicuro. Controlla i campi.");
+        showMessage("Riconoscimento copertina parziale. Controlla e correggi i campi.", "info");
+        return;
+      }
+    }
+
+    const foundByIsbn = await lookupBookByIsbn(isbn);
+
+    if (foundByIsbn) {
+      fillFieldsFromBookData(foundByIsbn);
+      setScanStatus(`ISBN trovato (${isbn}). Campi compilati automaticamente.`);
+      showMessage("Libro riconosciuto da ISBN. Controlla i campi e salva.", "success");
+      return;
+    }
+
+    setScanStatus(`ISBN trovato (${isbn}), ma nessun risultato online. Inserisci i dati a mano.`);
+    showMessage("ISBN letto, ma non ho trovato il libro online.", "info");
+  } catch (error) {
+    setScanStatus("Errore durante la scansione.");
+    showMessage(error.message || "Errore durante la scansione del libro.", "error");
+  }
+}
+
 function bootstrap() {
   loadFilters();
   hideBooks();
+  clearScanArea();
 
   if (els.pageSizeSelect) {
     pageSize = Number(els.pageSizeSelect.value) || 20;
@@ -415,6 +659,21 @@ function bootstrap() {
 
     if (editId) editBook(editId);
     if (deleteId) deleteBook(deleteId);
+  });
+
+  els.scanBookBtn?.addEventListener("click", () => {
+    els.scanImageInput?.click();
+  });
+
+  els.clearScanBtn?.addEventListener("click", () => {
+    clearScanArea();
+  });
+
+  els.scanImageInput?.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      await handleScanFile(file);
+    }
   });
 
   fetchBooks();
