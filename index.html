@@ -103,7 +103,7 @@
               <div class="card-header">
                 <h3>Scansione libro</h3>
                 <p class="subtitle-small">
-                  Prova prima a leggere l’ISBN. Se non viene trovato, prova a leggere la copertina con AI.
+                  L'app prova prima a leggere l’ISBN, poi il testo della copertina con OCR. L’AI viene usata solo come ultima risorsa.
                 </p>
               </div>
 
@@ -125,6 +125,27 @@
               </div>
 
               <p id="scanStatus" class="muted">Nessuna scansione effettuata.</p>
+
+              <div class="manual-isbn-box">
+                <label for="manualIsbn">
+                  <span>ISBN manuale</span>
+                </label>
+                <input
+                  id="manualIsbn"
+                  type="text"
+                  inputmode="numeric"
+                  placeholder="Es. 9788806229647"
+                />
+
+                <div class="actions wrap">
+                  <button id="searchManualIsbnBtn" type="button" class="secondary">
+                    Cerca ISBN
+                  </button>
+                  <button id="clearManualIsbnBtn" type="button" class="secondary">
+                    Pulisci ISBN
+                  </button>
+                </div>
+              </div>
             </section>
 
             <div class="actions wrap">
