@@ -5,6 +5,10 @@ let currentPage = 1;
 let pageSize = 20;
 let currentSort = "recent";
 let tesseractLoaderPromise = null;
+let zxingLoaderPromise = null;
+let barcodeControls = null;
+let barcodeReader = null;
+let barcodeBusy = false;
 
 const els = {
   messageBox: document.getElementById("messageBox"),
@@ -30,12 +34,15 @@ const els = {
   fStatus: document.getElementById("fStatus"),
   fNotes: document.getElementById("fNotes"),
 
-  scanBookBtn: document.getElementById("scanBookBtn"),
-  clearScanBtn: document.getElementById("clearScanBtn"),
+  scanCoverBtn: document.getElementById("scanCoverBtn"),
+  scanBarcodeBtn: document.getElementById("scanBarcodeBtn"),
+  stopBarcodeBtn: document.getElementById("stopBarcodeBtn"),
   scanImageInput: document.getElementById("scanImageInput"),
   scanPreviewWrapper: document.getElementById("scanPreviewWrapper"),
   scanPreview: document.getElementById("scanPreview"),
   scanStatus: document.getElementById("scanStatus"),
+  barcodeScanner: document.getElementById("barcodeScanner"),
+  barcodeVideo: document.getElementById("barcodeVideo"),
 
   manualIsbn: document.getElementById("manualIsbn"),
   searchManualIsbnBtn: document.getElementById("searchManualIsbnBtn"),
@@ -499,6 +506,186 @@ function drawImageToCanvas(img, crop = null) {
   return canvas;
 }
 
+async function loadZXing() {
+  if (window.ZXingBrowser) return window.ZXingBrowser;
+
+  if (!zxingLoaderPromise) {
+    zxingLoaderPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://unpkg.com/@zxing/browser@0.1.5";
+      script.async = true;
+
+      script.onload = () => {
+        if (window.ZXingBrowser) {
+          resolve(window.ZXingBrowser);
+        } else {
+          reject(new Error("ZXing caricata ma non disponibile."));
+        }
+      };
+
+      script.onerror = () => {
+        reject(new Error("Impossibile caricare ZXing."));
+      };
+
+      document.head.appendChild(script);
+    });
+  }
+
+  return zxingLoaderPromise;
+}
+
+function stopBarcodeScanner() {
+  try {
+    if (barcodeControls && typeof barcodeControls.stop === "function") {
+      barcodeControls.stop();
+    }
+  } catch (error) {
+    console.warn("Errore stop scanner:", error);
+  }
+
+  barcodeControls = null;
+  barcodeReader = null;
+  barcodeBusy = false;
+
+  if (els.barcodeVideo && els.barcodeVideo.srcObject) {
+    const stream = els.barcodeVideo.srcObject;
+    const tracks = stream.getTracks ? stream.getTracks() : [];
+    tracks.forEach((track) => track.stop());
+    els.barcodeVideo.srcObject = null;
+  }
+
+  els.barcodeScanner?.classList.add("hidden");
+}
+
+function chooseBestVideoDevice(devices = []) {
+  if (!devices.length) return null;
+
+  const preferred = devices.find((device) =>
+    /back|rear|environment|posteriore|traseira|trasera/i.test(device.label || "")
+  );
+
+  return preferred || devices[0];
+}
+
+async function startBarcodeScanner() {
+  clearMessage();
+  clearScanArea();
+  stopBarcodeScanner();
+
+  if (!els.barcodeVideo || !els.barcodeScanner) {
+    showMessage("Elementi scanner barcode non trovati nella pagina.", "error");
+    return;
+  }
+
+  try {
+    setScanStatus("Avvio scanner barcode...");
+    els.barcodeScanner.classList.remove("hidden");
+
+    const ZXingBrowser = await loadZXing();
+    const ReaderClass =
+      ZXingBrowser.BrowserMultiFormatOneDReader || ZXingBrowser.BrowserMultiFormatReader;
+
+    if (!ReaderClass) {
+      throw new Error("Reader ZXing non disponibile.");
+    }
+
+    barcodeReader = new ReaderClass();
+
+    let selectedDeviceId = undefined;
+
+    try {
+      const devices = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
+      const bestDevice = chooseBestVideoDevice(devices);
+      selectedDeviceId = bestDevice?.deviceId;
+    } catch (error) {
+      console.warn("Impossibile elencare le camere:", error);
+    }
+
+    setScanStatus("Inquadra solo il barcode ISBN da vicino.");
+
+    barcodeControls = await barcodeReader.decodeFromVideoDevice(
+      selectedDeviceId,
+      els.barcodeVideo,
+      async (result, error, controls) => {
+        if (controls) {
+          barcodeControls = controls;
+        }
+
+        if (barcodeBusy) return;
+
+        const rawText = String(result?.getText?.() || result?.text || "").trim();
+        const isbn = cleanManualIsbn(rawText);
+
+        if (isValidIsbnFormat(isbn)) {
+          barcodeBusy = true;
+          setManualIsbn(isbn);
+          setScanStatus(`Barcode letto: ${isbn}`);
+          stopBarcodeScanner();
+          await searchByManualIsbn();
+        } else if (rawText) {
+          const maybeDigits = rawText.replace(/[^\dXx]/g, "");
+          if (isValidIsbnFormat(maybeDigits)) {
+            barcodeBusy = true;
+            setManualIsbn(maybeDigits.toUpperCase());
+            setScanStatus(`Barcode letto: ${maybeDigits.toUpperCase()}`);
+            stopBarcodeScanner();
+            await searchByManualIsbn();
+          }
+        } else if (error && error.name !== "NotFoundException") {
+          console.warn("ZXing callback error:", error);
+        }
+      }
+    );
+  } catch (error) {
+    console.error("Errore scanner barcode:", error);
+    stopBarcodeScanner();
+    setScanStatus("Errore avvio scanner barcode.");
+    showMessage(error.message || "Errore durante l'avvio dello scanner barcode.", "error");
+  }
+}
+
+async function detectBarcodeWithZXingFromImageElement(img) {
+  try {
+    const ZXingBrowser = await loadZXing();
+    const ReaderClass =
+      ZXingBrowser.BrowserMultiFormatOneDReader || ZXingBrowser.BrowserMultiFormatReader;
+
+    if (!ReaderClass) return null;
+
+    const reader = new ReaderClass();
+    const result = await reader.decodeFromImageElement(img);
+    const rawText = String(result?.getText?.() || result?.text || "").trim();
+    const isbn = cleanManualIsbn(rawText);
+
+    if (isValidIsbnFormat(isbn)) return isbn;
+
+    const maybeDigits = rawText.replace(/[^\dXx]/g, "");
+    if (isValidIsbnFormat(maybeDigits)) return maybeDigits.toUpperCase();
+
+    return null;
+  } catch (error) {
+    console.warn("ZXing immagine fallita:", error);
+    return null;
+  }
+}
+
+async function detectBarcodeWithZXingFromCanvas(canvas) {
+  try {
+    const img = new Image();
+
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = canvas.toDataURL("image/jpeg", 0.95);
+    });
+
+    return await detectBarcodeWithZXingFromImageElement(img);
+  } catch (error) {
+    console.warn("ZXing canvas fallita:", error);
+    return null;
+  }
+}
+
 async function detectBarcodeFromSource(source) {
   if (!("BarcodeDetector" in window)) return null;
 
@@ -557,7 +744,10 @@ async function detectIsbnFromImage(file) {
     const width = img.naturalWidth || img.width;
     const height = img.naturalHeight || img.height;
 
-    let isbn = await detectBarcodeFromSource(img);
+    let isbn = await detectBarcodeWithZXingFromImageElement(img);
+    if (isbn) return isbn;
+
+    isbn = await detectBarcodeFromSource(img);
     if (isbn) return isbn;
 
     if ("createImageBitmap" in window) {
@@ -571,6 +761,9 @@ async function detectIsbnFromImage(file) {
     }
 
     const fullCanvas = downscaleCanvasIfNeeded(drawImageToCanvas(img), 1800);
+    isbn = await detectBarcodeWithZXingFromCanvas(fullCanvas);
+    if (isbn) return isbn;
+
     isbn = await detectBarcodeFromSource(fullCanvas);
     if (isbn) return isbn;
 
@@ -583,6 +776,9 @@ async function detectIsbnFromImage(file) {
       }),
       1800
     );
+    isbn = await detectBarcodeWithZXingFromCanvas(lowerHalf);
+    if (isbn) return isbn;
+
     isbn = await detectBarcodeFromSource(lowerHalf);
     if (isbn) return isbn;
 
@@ -595,6 +791,9 @@ async function detectIsbnFromImage(file) {
       }),
       1800
     );
+    isbn = await detectBarcodeWithZXingFromCanvas(lowerWide);
+    if (isbn) return isbn;
+
     isbn = await detectBarcodeFromSource(lowerWide);
     if (isbn) return isbn;
 
@@ -607,6 +806,9 @@ async function detectIsbnFromImage(file) {
       }),
       1800
     );
+    isbn = await detectBarcodeWithZXingFromCanvas(lowerCenter);
+    if (isbn) return isbn;
+
     isbn = await detectBarcodeFromSource(lowerCenter);
     if (isbn) return isbn;
 
@@ -799,11 +1001,12 @@ async function analyzeCoverWithAI(file) {
   };
 }
 
-async function handleScanFile(file) {
+async function handleScanCoverFile(file) {
   if (!file) return;
 
   clearMessage();
-  setScanStatus("Analisi immagine in corso...");
+  stopBarcodeScanner();
+  setScanStatus("Analisi copertina in corso...");
 
   let previewUrl = "";
 
@@ -818,13 +1021,12 @@ async function handleScanFile(file) {
       els.scanPreviewWrapper.classList.remove("hidden");
     }
 
-    setScanStatus("Provo a leggere il codice ISBN...");
+    setScanStatus("Provo a leggere l'ISBN dalla copertina...");
     let isbn = await detectIsbnFromImage(file);
-
     let ocrText = "";
 
     if (!isbn) {
-      setScanStatus("Barcode non trovato. Provo OCR mirato per ISBN...");
+      setScanStatus("ISBN non trovato. Provo OCR mirato per ISBN...");
       ocrText = await runOcrForIsbn(file);
       isbn = extractIsbnFromText(ocrText);
     }
@@ -847,7 +1049,7 @@ async function handleScanFile(file) {
     }
 
     if (!ocrText) {
-      setScanStatus("Provo a leggere il testo della copertina...");
+      setScanStatus("Provo a leggere titolo e autore dalla copertina...");
       ocrText = await runOcr(file);
     }
 
@@ -869,14 +1071,23 @@ async function handleScanFile(file) {
       return;
     }
 
+    setScanStatus("OCR non sufficiente. Provo con AI...");
+    const aiResult = await analyzeCoverWithAI(file);
+
+    if (aiResult && (aiResult.title || aiResult.author || aiResult.genre)) {
+      fillFieldsFromBookData(aiResult);
+      setScanStatus("AI completata. Controlla i campi e correggi se serve.");
+      showMessage("Dati trovati con AI. Verifica prima di salvare.", "success");
+      return;
+    }
+
     fillFieldsFromBookData(guessed);
-    setScanStatus("ISBN non trovato. Ho provato solo barcode e OCR.");
-    showMessage("Non ho trovato un ISBN leggibile. Puoi inserire l'ISBN manualmente.", "info");
-    return;
+    setScanStatus("Dati parziali trovati. Puoi correggere i campi o inserire l'ISBN manualmente.");
+    showMessage("Non ho trovato un ISBN leggibile. Puoi usare ISBN manuale oppure correggere i campi.", "info");
   } catch (error) {
-    console.error("Errore scansione:", error);
-    setScanStatus(error.message || "Errore durante la scansione.");
-    showMessage(error.message || "Errore durante la scansione del libro.", "error");
+    console.error("Errore scansione copertina:", error);
+    setScanStatus(error.message || "Errore durante la scansione della copertina.");
+    showMessage(error.message || "Errore durante la scansione della copertina.", "error");
   } finally {
     if (previewUrl) {
       setTimeout(() => URL.revokeObjectURL(previewUrl), 1000);
@@ -960,19 +1171,25 @@ function bindStaticEvents() {
     if (deleteId) deleteBook(deleteId);
   });
 
-  els.scanBookBtn?.addEventListener("click", () => {
+  els.scanCoverBtn?.addEventListener("click", () => {
+    stopBarcodeScanner();
     els.scanImageInput?.click();
   });
 
-  els.clearScanBtn?.addEventListener("click", () => {
-    clearScanArea();
+  els.scanBarcodeBtn?.addEventListener("click", () => {
+    startBarcodeScanner();
+  });
+
+  els.stopBarcodeBtn?.addEventListener("click", () => {
+    stopBarcodeScanner();
+    setScanStatus("Scanner barcode chiuso.");
   });
 
   els.scanImageInput?.addEventListener("change", async (event) => {
     const input = event.target;
     if (!(input instanceof HTMLInputElement)) return;
     const file = input.files?.[0];
-    if (file) await handleScanFile(file);
+    if (file) await handleScanCoverFile(file);
   });
 
   els.searchManualIsbnBtn?.addEventListener("click", searchByManualIsbn);
@@ -995,6 +1212,7 @@ async function bootstrap() {
     loadFilters();
     hideBooks();
     clearScanArea();
+    stopBarcodeScanner();
 
     if (els.pageSizeSelect) {
       pageSize = Number(els.pageSizeSelect.value) || 20;
