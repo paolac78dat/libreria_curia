@@ -35,7 +35,11 @@ const els = {
   scanImageInput: document.getElementById("scanImageInput"),
   scanPreviewWrapper: document.getElementById("scanPreviewWrapper"),
   scanPreview: document.getElementById("scanPreview"),
-  scanStatus: document.getElementById("scanStatus")
+  scanStatus: document.getElementById("scanStatus"),
+
+  manualIsbn: document.getElementById("manualIsbn"),
+  searchManualIsbnBtn: document.getElementById("searchManualIsbnBtn"),
+  clearManualIsbnBtn: document.getElementById("clearManualIsbnBtn")
 };
 
 const filterKeys = ["searchAll", "fTitle", "fAuthor", "fGenre", "fStatus", "fNotes"];
@@ -143,6 +147,10 @@ function clearScanArea() {
   if (els.scanPreview) els.scanPreview.src = "";
   if (els.scanPreviewWrapper) els.scanPreviewWrapper.classList.add("hidden");
   setScanStatus("Nessuna scansione effettuata.");
+}
+
+function clearManualIsbn() {
+  if (els.manualIsbn) els.manualIsbn.value = "";
 }
 
 function sortBooks(data) {
@@ -328,6 +336,7 @@ async function saveBook() {
 
     clearForm();
     clearScanArea();
+    clearManualIsbn();
     showMessage(wasEditing ? "Libro aggiornato." : "Libro salvato.", "success");
     showBooks();
     currentPage = 1;
@@ -384,6 +393,61 @@ function fillFieldsFromBookData({ title = "", author = "", genre = "" }) {
   if (title && els.title) els.title.value = title;
   if (author && els.author) els.author.value = author;
   if (genre && els.genre) els.genre.value = genre;
+}
+
+function setManualIsbn(value) {
+  if (els.manualIsbn && value) {
+    els.manualIsbn.value = value;
+  }
+}
+
+function cleanManualIsbn(value) {
+  return String(value || "")
+    .replace(/[\s\-]/g, "")
+    .toUpperCase();
+}
+
+function isValidIsbnFormat(value) {
+  return /^(97[89]\d{10}|\d{9}[0-9X])$/.test(value);
+}
+
+async function searchByManualIsbn() {
+  clearMessage();
+
+  const raw = els.manualIsbn?.value || "";
+  const isbn = cleanManualIsbn(raw);
+
+  if (!isbn) {
+    showMessage("Inserisci un ISBN.", "error");
+    setScanStatus("Inserisci un ISBN manuale.");
+    return;
+  }
+
+  if (!isValidIsbnFormat(isbn)) {
+    showMessage("Formato ISBN non valido.", "error");
+    setScanStatus("Formato ISBN non valido.");
+    return;
+  }
+
+  try {
+    setScanStatus(`Cerco il libro con ISBN ${isbn}...`);
+    const found = await lookupBookByIsbn(isbn);
+
+    if (found) {
+      setManualIsbn(isbn);
+      fillFieldsFromBookData(found);
+      showMessage("Libro trovato da ISBN manuale.", "success");
+      setScanStatus(`ISBN ${isbn} trovato.`);
+      return;
+    }
+
+    showMessage("ISBN valido, ma nessun libro trovato online.", "info");
+    setScanStatus(`ISBN ${isbn} non trovato online.`);
+  } catch (error) {
+    console.error("Errore ricerca ISBN manuale:", error);
+    showMessage("Errore durante la ricerca ISBN.", "error");
+    setScanStatus("Errore durante la ricerca ISBN.");
+  }
 }
 
 async function fileToImageElement(file) {
@@ -752,6 +816,7 @@ async function handleScanFile(file) {
     }
 
     if (isbn) {
+      setManualIsbn(isbn);
       setScanStatus(`ISBN trovato (${isbn}). Recupero i dati online...`);
       const foundByIsbn = await lookupBookByIsbn(isbn);
 
@@ -790,7 +855,7 @@ async function handleScanFile(file) {
       return;
     }
 
-    setScanStatus("Metodi classici insufficienti. Provo con AI...");
+    setScanStatus("Metodi classici insufficienti.");
     const aiResult = await analyzeCoverWithAI(file);
 
     if (aiResult && (aiResult.title || aiResult.author || aiResult.genre)) {
@@ -903,6 +968,20 @@ function bindStaticEvents() {
     if (!(input instanceof HTMLInputElement)) return;
     const file = input.files?.[0];
     if (file) await handleScanFile(file);
+  });
+
+  els.searchManualIsbnBtn?.addEventListener("click", searchByManualIsbn);
+
+  els.clearManualIsbnBtn?.addEventListener("click", () => {
+    clearManualIsbn();
+    setScanStatus("ISBN manuale pulito.");
+  });
+
+  els.manualIsbn?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      searchByManualIsbn();
+    }
   });
 }
 
