@@ -26,7 +26,8 @@ body {
 button,
 input,
 select,
-textarea {
+textarea,
+video {
   font: inherit;
 }
 
@@ -74,6 +75,7 @@ h1 {
   color: var(--muted);
   font-size: 0.95rem;
   margin-bottom: 0;
+  line-height: 1.45;
 }
 
 .card {
@@ -274,6 +276,31 @@ button:disabled {
   line-height: 1.45;
 }
 
+/* Scanner barcode live */
+#barcodeScanner {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.barcode-video-wrap {
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: #0f1220;
+}
+
+#barcodeVideo {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  max-height: 420px;
+  object-fit: cover;
+  background: #0f1220;
+}
+
 /* ISBN manuale */
 .manual-isbn-box {
   margin-top: 16px;
@@ -420,6 +447,11 @@ button:disabled {
     max-height: 280px;
   }
 
+  #barcodeVideo {
+    min-height: 240px;
+    max-height: 340px;
+  }
+
   .manual-isbn-box {
     padding: 12px;
   }
@@ -461,6 +493,15 @@ button:disabled {
 
   .scan-preview img {
     max-height: 220px;
+  }
+
+  #barcodeScanner {
+    padding: 10px;
+  }
+
+  #barcodeVideo {
+    min-height: 220px;
+    max-height: 300px;
   }
 
   .manual-isbn-box {
