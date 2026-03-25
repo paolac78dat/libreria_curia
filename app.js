@@ -557,44 +557,58 @@ async function detectIsbnFromImage(file) {
     const width = img.naturalWidth || img.width;
     const height = img.naturalHeight || img.height;
 
-    const attempts = [];
+    let isbn = await detectBarcodeFromSource(img);
+    if (isbn) return isbn;
 
-    attempts.push(
-      drawImageToCanvas(img)
-    );
+    if ("createImageBitmap" in window) {
+      try {
+        const bitmap = await createImageBitmap(file);
+        isbn = await detectBarcodeFromSource(bitmap);
+        if (isbn) return isbn;
+      } catch (error) {
+        console.warn("createImageBitmap fallito:", error);
+      }
+    }
 
-    attempts.push(
+    const fullCanvas = downscaleCanvasIfNeeded(drawImageToCanvas(img), 1800);
+    isbn = await detectBarcodeFromSource(fullCanvas);
+    if (isbn) return isbn;
+
+    const lowerHalf = downscaleCanvasIfNeeded(
       drawImageToCanvas(img, {
         sx: 0,
         sy: Math.floor(height * 0.5),
         sw: width,
         sh: Math.floor(height * 0.5)
-      })
+      }),
+      1800
     );
+    isbn = await detectBarcodeFromSource(lowerHalf);
+    if (isbn) return isbn;
 
-    attempts.push(
+    const lowerWide = downscaleCanvasIfNeeded(
       drawImageToCanvas(img, {
-        sx: Math.floor(width * 0.1),
-        sy: Math.floor(height * 0.62),
-        sw: Math.floor(width * 0.8),
-        sh: Math.floor(height * 0.28)
-      })
+        sx: Math.floor(width * 0.08),
+        sy: Math.floor(height * 0.60),
+        sw: Math.floor(width * 0.84),
+        sh: Math.floor(height * 0.30)
+      }),
+      1800
     );
+    isbn = await detectBarcodeFromSource(lowerWide);
+    if (isbn) return isbn;
 
-    attempts.push(
+    const lowerCenter = downscaleCanvasIfNeeded(
       drawImageToCanvas(img, {
         sx: Math.floor(width * 0.18),
         sy: Math.floor(height * 0.68),
         sw: Math.floor(width * 0.64),
-        sh: Math.floor(height * 0.2)
-      })
+        sh: Math.floor(height * 0.20)
+      }),
+      1800
     );
-
-    for (const attemptCanvas of attempts) {
-      const optimizedCanvas = downscaleCanvasIfNeeded(attemptCanvas, 1600);
-      const isbn = await detectBarcodeFromSource(optimizedCanvas);
-      if (isbn) return isbn;
-    }
+    isbn = await detectBarcodeFromSource(lowerCenter);
+    if (isbn) return isbn;
 
     return null;
   } catch (error) {
@@ -855,19 +869,10 @@ async function handleScanFile(file) {
       return;
     }
 
-    setScanStatus("Metodi classici insufficienti.");
-    const aiResult = await analyzeCoverWithAI(file);
-
-    if (aiResult && (aiResult.title || aiResult.author || aiResult.genre)) {
-      fillFieldsFromBookData(aiResult);
-      setScanStatus("AI completata. Controlla i campi e correggi se serve.");
-      showMessage("Dati trovati con AI. Verifica prima di salvare.", "success");
-      return;
-    }
-
     fillFieldsFromBookData(guessed);
-    setScanStatus("Riconoscimento parziale. Controlla i campi.");
-    showMessage("Ho trovato solo dati parziali. Controlla e correggi.", "info");
+    setScanStatus("ISBN non trovato. Ho provato solo barcode e OCR.");
+    showMessage("Non ho trovato un ISBN leggibile. Puoi inserire l'ISBN manualmente.", "info");
+    return;
   } catch (error) {
     console.error("Errore scansione:", error);
     setScanStatus(error.message || "Errore durante la scansione.");
