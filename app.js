@@ -418,6 +418,48 @@ function isValidIsbnFormat(value) {
   return /^(97[89]\d{10}|\d{9}[0-9X])$/.test(value);
 }
 
+function containsCyrillic(text = "") {
+  return /[\u0400-\u04FF]/.test(String(text));
+}
+
+function looksLatin(text = "") {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  return !containsCyrillic(value);
+}
+
+function getPreferredDocScore(doc) {
+  let score = 0;
+
+  const title = doc?.title || "";
+  const author = doc?.author_name?.[0] || "";
+  const languages = Array.isArray(doc?.language) ? doc.language : [];
+
+  if (looksLatin(title)) score += 4;
+  if (looksLatin(author)) score += 3;
+
+  if (languages.includes("ita")) score += 6;
+  if (languages.includes("eng")) score += 4;
+
+  if (containsCyrillic(title)) score -= 6;
+  if (containsCyrillic(author)) score -= 5;
+
+  if (doc?.cover_i) score += 1;
+  if (doc?.first_publish_year) score += 1;
+
+  return score;
+}
+
+function pickBestOpenLibraryDoc(docs = []) {
+  if (!Array.isArray(docs) || !docs.length) return null;
+
+  const sorted = [...docs].sort((a, b) => {
+    return getPreferredDocScore(b) - getPreferredDocScore(a);
+  });
+
+  return sorted[0] || null;
+}
+
 async function searchByManualIsbn() {
   clearMessage();
 
@@ -925,7 +967,9 @@ async function fetchJsonWithTimeout(url, timeout = 10000) {
 async function lookupBookByIsbn(isbn) {
   const url = `https://openlibrary.org/search.json?isbn=${encodeURIComponent(isbn)}`;
   const data = await fetchJsonWithTimeout(url, 10000);
-  const doc = data?.docs?.[0];
+  const docs = data?.docs || [];
+  const doc = pickBestOpenLibraryDoc(docs);
+
   if (!doc) return null;
 
   return {
@@ -942,7 +986,9 @@ async function lookupBookByTitleAuthor(title, author) {
 
   const url = `https://openlibrary.org/search.json?${params.toString()}`;
   const data = await fetchJsonWithTimeout(url, 10000);
-  const doc = data?.docs?.[0];
+  const docs = data?.docs || [];
+  const doc = pickBestOpenLibraryDoc(docs);
+
   if (!doc) return null;
 
   return {
