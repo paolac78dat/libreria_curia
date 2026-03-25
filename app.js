@@ -61,8 +61,7 @@ function showMessage(text, type = "info") {
 function clearMessage() {
   if (!els.messageBox) return;
   els.messageBox.textContent = "";
-  els.messageBox.className = "message hidden";
-}
+  els.messageBox.className = "message hidden"; }
 
 function setScanStatus(text) {
   if (els.scanStatus) {
@@ -80,8 +79,7 @@ function sanitize(str = "") {
 }
 
 function normalize(value) {
-  return String(value || "").trim().toLowerCase();
-}
+  return String(value || "").trim().toLowerCase(); }
 
 function saveFilters() {
   try {
@@ -113,8 +111,7 @@ function loadFilters() {
 }
 
 function hasActiveFilters() {
-  return filterKeys.some((key) => normalize(els[key]?.value));
-}
+  return filterKeys.some((key) => normalize(els[key]?.value)); }
 
 function showBooks() {
   booksVisible = true;
@@ -137,8 +134,7 @@ function resetFilters() {
 
   if (els.resultsCount) els.resultsCount.textContent = "0 libri";
   if (els.books) els.books.innerHTML = "";
-  if (els.pageInfo) els.pageInfo.textContent = "Pagina 1 di 1";
-}
+  if (els.pageInfo) els.pageInfo.textContent = "Pagina 1 di 1"; }
 
 function clearForm() {
   editingBookId = null;
@@ -153,12 +149,10 @@ function clearScanArea() {
   if (els.scanImageInput) els.scanImageInput.value = "";
   if (els.scanPreview) els.scanPreview.src = "";
   if (els.scanPreviewWrapper) els.scanPreviewWrapper.classList.add("hidden");
-  setScanStatus("Nessuna scansione effettuata.");
-}
+  setScanStatus("Nessuna scansione effettuata."); }
 
 function clearManualIsbn() {
-  if (els.manualIsbn) els.manualIsbn.value = "";
-}
+  if (els.manualIsbn) els.manualIsbn.value = ""; }
 
 function sortBooks(data) {
   const sorted = [...(data || [])];
@@ -365,8 +359,7 @@ function editBook(id) {
   if (els.status) els.status.value = book.status || "Da leggere";
   if (els.notes) els.notes.value = book.notes || "";
 
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
+  window.scrollTo({ top: 0, behavior: "smooth" }); }
 
 async function deleteBook(id) {
   const confirmed = window.confirm("Vuoi eliminare questo libro?");
@@ -399,8 +392,7 @@ async function deleteBook(id) {
 function fillFieldsFromBookData({ title = "", author = "", genre = "" }) {
   if (title && els.title) els.title.value = title;
   if (author && els.author) els.author.value = author;
-  if (genre && els.genre) els.genre.value = genre;
-}
+  if (genre && els.genre) els.genre.value = genre; }
 
 function setManualIsbn(value) {
   if (els.manualIsbn && value) {
@@ -428,6 +420,11 @@ function looksLatin(text = "") {
   return !containsCyrillic(value);
 }
 
+function isPreferredReadableDoc(doc) {
+  const title = String(doc?.title || "");
+  const author = String(doc?.author_name?.[0] || "");
+  return looksLatin(title) && looksLatin(author); }
+
 function getPreferredDocScore(doc) {
   let score = 0;
 
@@ -435,17 +432,21 @@ function getPreferredDocScore(doc) {
   const author = doc?.author_name?.[0] || "";
   const languages = Array.isArray(doc?.language) ? doc.language : [];
 
-  if (looksLatin(title)) score += 4;
-  if (looksLatin(author)) score += 3;
+  if (looksLatin(title)) score += 20;
+  if (looksLatin(author)) score += 18;
 
-  if (languages.includes("ita")) score += 6;
-  if (languages.includes("eng")) score += 4;
+  if (languages.includes("ita")) score += 100;
+  if (languages.includes("eng")) score += 60;
+  if (languages.includes("fre")) score += 10;
+  if (languages.includes("spa")) score += 10;
+  if (languages.includes("ger")) score += 10;
 
-  if (containsCyrillic(title)) score -= 6;
-  if (containsCyrillic(author)) score -= 5;
+  if (containsCyrillic(title)) score -= 120;
+  if (containsCyrillic(author)) score -= 100;
 
-  if (doc?.cover_i) score += 1;
-  if (doc?.first_publish_year) score += 1;
+  if (doc?.cover_i) score += 8;
+  if (doc?.first_publish_year) score += 4;
+  if (doc?.ebook_access === "no_ebook") score += 1;
 
   return score;
 }
@@ -453,12 +454,21 @@ function getPreferredDocScore(doc) {
 function pickBestOpenLibraryDoc(docs = []) {
   if (!Array.isArray(docs) || !docs.length) return null;
 
-  const sorted = [...docs].sort((a, b) => {
+  const readableDocs = docs.filter((doc) => isPreferredReadableDoc(doc));
+  const pool = readableDocs.length ? readableDocs : docs;
+
+  const sorted = [...pool].sort((a, b) => {
     return getPreferredDocScore(b) - getPreferredDocScore(a);
   });
 
   return sorted[0] || null;
 }
+
+function isReturnedBookReadable(book) {
+  if (!book) return false;
+  const title = String(book.title || "");
+  const author = String(book.author || "");
+  return !containsCyrillic(title) && !containsCyrillic(author); }
 
 async function searchByManualIsbn() {
   clearMessage();
@@ -483,6 +493,12 @@ async function searchByManualIsbn() {
     const found = await lookupBookByIsbn(isbn);
 
     if (found) {
+      if (!isReturnedBookReadable(found)) {
+        showMessage("Ho trovato solo un'edizione in una lingua non desiderata. Inserisci i campi manualmente o prova la copertina.", "info");
+        setScanStatus(`ISBN ${isbn} trovato, ma il risultato non è nella lingua desiderata.`);
+        return;
+      }
+
       setManualIsbn(isbn);
       fillFieldsFromBookData(found);
       showMessage("Libro trovato da ISBN manuale.", "success");
@@ -1083,6 +1099,12 @@ async function handleScanCoverFile(file) {
       const foundByIsbn = await lookupBookByIsbn(isbn);
 
       if (foundByIsbn) {
+        if (!isReturnedBookReadable(foundByIsbn)) {
+          setScanStatus(`ISBN trovato (${isbn}), ma l'edizione trovata non è nella lingua desiderata.`);
+          showMessage("Ho trovato solo un'edizione in una lingua non desiderata. Puoi compilare i campi manualmente o provare la copertina.", "info");
+          return;
+        }
+
         fillFieldsFromBookData(foundByIsbn);
         setScanStatus(`ISBN trovato (${isbn}). Campi compilati automaticamente.`);
         showMessage("Libro riconosciuto da ISBN. Controlla i campi e salva.", "success");
@@ -1111,10 +1133,12 @@ async function handleScanCoverFile(file) {
     }
 
     if (found) {
-      fillFieldsFromBookData(found);
-      setScanStatus("Copertina letta. Controlla i campi e correggi se serve.");
-      showMessage("Dati trovati dalla copertina. Verifica prima di salvare.", "success");
-      return;
+      if (isReturnedBookReadable(found)) {
+        fillFieldsFromBookData(found);
+        setScanStatus("Copertina letta. Controlla i campi e correggi se serve.");
+        showMessage("Dati trovati dalla copertina. Verifica prima di salvare.", "success");
+        return;
+      }
     }
 
     setScanStatus("OCR non sufficiente. Provo con AI...");
