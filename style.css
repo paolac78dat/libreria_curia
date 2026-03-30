@@ -245,6 +245,43 @@ button:disabled {
   all: unset;
 }
 
+/* Campi checkbox */
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 0;
+  font-weight: 600;
+}
+
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid #cfd6fb;
+  border-radius: 14px;
+  background: #fbfcff;
+}
+
+.inline-check input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.inline-check span {
+  margin: 0;
+  font-weight: 500;
+}
+
 /* Scansione libro */
 .scan-box {
   margin-top: 18px;
@@ -332,7 +369,7 @@ button:disabled {
 
 .books-table {
   width: 100%;
-  min-width: 780px;
+  min-width: 980px;
   border-collapse: collapse;
   font-size: 14px;
   background: white;
@@ -440,7 +477,7 @@ button:disabled {
   }
 
   .books-table {
-    min-width: 760px;
+    min-width: 920px;
   }
 
   .scan-preview img {
@@ -465,7 +502,6 @@ button:disabled {
   }
 }
 
-/* iPhone piccolo */
 @media (max-width: 480px) {
   .app-shell {
     padding: 12px;
@@ -484,7 +520,7 @@ button:disabled {
   }
 
   .books-table {
-    min-width: 720px;
+    min-width: 880px;
   }
 
   .scan-box {
