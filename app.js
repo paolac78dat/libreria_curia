@@ -10,6 +10,60 @@ let barcodeControls = null;
 let barcodeReader = null;
 let barcodeBusy = false;
 
+const GENRES = [
+  "Romanzo",
+  "Romanzo classico",
+  "Romanzo contemporaneo",
+  "Romanzo storico",
+  "Romanzo d'avventura",
+  "Romanzo di formazione",
+  "Romanzo psicologico",
+  "Romanzo epistolare",
+  "Giallo",
+  "Thriller",
+  "Noir",
+  "Poliziesco",
+  "Fantasy",
+  "Fantascienza",
+  "Distopico",
+  "Romance",
+  "Horror",
+  "Gotico",
+  "Avventura",
+  "Classici",
+  "Racconti",
+  "Novella",
+  "Fiabe",
+  "Favole",
+  "Poesia",
+  "Teatro",
+  "Saggio",
+  "Biografia",
+  "Autobiografia",
+  "Diario",
+  "Memorie",
+  "Libro per ragazzi",
+  "Young Adult",
+  "Fumetto",
+  "Graphic novel",
+  "Manga",
+  "Storico",
+  "Mitologia",
+  "Filosofia",
+  "Religione",
+  "Arte",
+  "Musica",
+  "Scienza",
+  "Manuale",
+  "Didattica",
+  "Psicologia",
+  "Crescita personale",
+  "Attualità",
+  "Economia",
+  "Politica",
+  "Altro"
+];
+
 const els = {
   messageBox: document.getElementById("messageBox"),
   books: document.getElementById("books"),
@@ -26,6 +80,9 @@ const els = {
   genre: document.getElementById("genre"),
   status: document.getElementById("status"),
   notes: document.getElementById("notes"),
+  inglese: document.getElementById("inglese"),
+  prestato: document.getElementById("prestato"),
+  prestatoA: document.getElementById("prestatoA"),
 
   searchAll: document.getElementById("searchAll"),
   fTitle: document.getElementById("fTitle"),
@@ -33,6 +90,9 @@ const els = {
   fGenre: document.getElementById("fGenre"),
   fStatus: document.getElementById("fStatus"),
   fNotes: document.getElementById("fNotes"),
+  fInglese: document.getElementById("fInglese"),
+  fPrestato: document.getElementById("fPrestato"),
+  fPrestatoA: document.getElementById("fPrestatoA"),
 
   scanCoverBtn: document.getElementById("scanCoverBtn"),
   scanBarcodeBtn: document.getElementById("scanBarcodeBtn"),
@@ -49,7 +109,51 @@ const els = {
   clearManualIsbnBtn: document.getElementById("clearManualIsbnBtn")
 };
 
-const filterKeys = ["searchAll", "fTitle", "fAuthor", "fGenre", "fStatus", "fNotes"];
+const filterKeys = [
+  "searchAll",
+  "fTitle",
+  "fAuthor",
+  "fGenre",
+  "fStatus",
+  "fNotes",
+  "fInglese",
+  "fPrestato",
+  "fPrestatoA"
+];
+
+function populateGenreSelects() {
+  if (els.genre) {
+    const currentValue = els.genre.value;
+    els.genre.innerHTML = '<option value="">Seleziona genere</option>';
+
+    GENRES.forEach((genre) => {
+      const option = document.createElement("option");
+      option.value = genre;
+      option.textContent = genre;
+      els.genre.appendChild(option);
+    });
+
+    if (currentValue && GENRES.includes(currentValue)) {
+      els.genre.value = currentValue;
+    }
+  }
+
+  if (els.fGenre) {
+    const currentValue = els.fGenre.value;
+    els.fGenre.innerHTML = '<option value="">Tutti i generi</option>';
+
+    GENRES.forEach((genre) => {
+      const option = document.createElement("option");
+      option.value = genre;
+      option.textContent = genre;
+      els.fGenre.appendChild(option);
+    });
+
+    if (currentValue && GENRES.includes(currentValue)) {
+      els.fGenre.value = currentValue;
+    }
+  }
+}
 
 function showMessage(text, type = "info") {
   if (!els.messageBox) return;
@@ -61,7 +165,8 @@ function showMessage(text, type = "info") {
 function clearMessage() {
   if (!els.messageBox) return;
   els.messageBox.textContent = "";
-  els.messageBox.className = "message hidden"; }
+  els.messageBox.className = "message hidden";
+}
 
 function setScanStatus(text) {
   if (els.scanStatus) {
@@ -79,14 +184,22 @@ function sanitize(str = "") {
 }
 
 function normalize(value) {
-  return String(value || "").trim().toLowerCase(); }
+  return String(value || "").trim().toLowerCase();
+}
 
 function saveFilters() {
   try {
     const payload = {};
     filterKeys.forEach((key) => {
-      if (els[key]) payload[key] = els[key].value;
+      if (!els[key]) return;
+
+      if (els[key] instanceof HTMLInputElement && els[key].type === "checkbox") {
+        payload[key] = els[key].checked;
+      } else {
+        payload[key] = els[key].value;
+      }
     });
+
     localStorage.setItem("biblioteca-filters", JSON.stringify(payload));
   } catch (error) {
     console.warn("Impossibile salvare i filtri", error);
@@ -100,7 +213,11 @@ function loadFilters() {
 
     const parsed = JSON.parse(raw);
     filterKeys.forEach((key) => {
-      if (els[key] && parsed[key] !== undefined) {
+      if (!els[key] || parsed[key] === undefined) return;
+
+      if (els[key] instanceof HTMLInputElement && els[key].type === "checkbox") {
+        els[key].checked = !!parsed[key];
+      } else {
         els[key].value = parsed[key];
       }
     });
@@ -111,7 +228,15 @@ function loadFilters() {
 }
 
 function hasActiveFilters() {
-  return filterKeys.some((key) => normalize(els[key]?.value)); }
+  return filterKeys.some((key) => {
+    const el = els[key];
+    if (!el) return false;
+    if (el instanceof HTMLInputElement && el.type === "checkbox") {
+      return el.checked;
+    }
+    return normalize(el.value);
+  });
+}
 
 function showBooks() {
   booksVisible = true;
@@ -125,8 +250,19 @@ function hideBooks() {
 
 function resetFilters() {
   filterKeys.forEach((key) => {
-    if (els[key]) els[key].value = "";
+    if (!els[key]) return;
+
+    if (els[key] instanceof HTMLInputElement && els[key].type === "checkbox") {
+      els[key].checked = false;
+    } else {
+      els[key].value = "";
+    }
   });
+
+  if (els.fStatus) els.fStatus.value = "";
+  if (els.fGenre) els.fGenre.value = "";
+  if (els.fInglese) els.fInglese.value = "";
+  if (els.fPrestato) els.fPrestato.value = "";
 
   localStorage.removeItem("biblioteca-filters");
   currentPage = 1;
@@ -134,7 +270,8 @@ function resetFilters() {
 
   if (els.resultsCount) els.resultsCount.textContent = "0 libri";
   if (els.books) els.books.innerHTML = "";
-  if (els.pageInfo) els.pageInfo.textContent = "Pagina 1 di 1"; }
+  if (els.pageInfo) els.pageInfo.textContent = "Pagina 1 di 1";
+}
 
 function clearForm() {
   editingBookId = null;
@@ -143,16 +280,21 @@ function clearForm() {
   if (els.genre) els.genre.value = "";
   if (els.status) els.status.value = "Da leggere";
   if (els.notes) els.notes.value = "";
+  if (els.inglese) els.inglese.checked = false;
+  if (els.prestato) els.prestato.checked = false;
+  if (els.prestatoA) els.prestatoA.value = "";
 }
 
 function clearScanArea() {
   if (els.scanImageInput) els.scanImageInput.value = "";
   if (els.scanPreview) els.scanPreview.src = "";
   if (els.scanPreviewWrapper) els.scanPreviewWrapper.classList.add("hidden");
-  setScanStatus("Nessuna scansione effettuata."); }
+  setScanStatus("Nessuna scansione effettuata.");
+}
 
 function clearManualIsbn() {
-  if (els.manualIsbn) els.manualIsbn.value = ""; }
+  if (els.manualIsbn) els.manualIsbn.value = "";
+}
 
 function sortBooks(data) {
   const sorted = [...(data || [])];
@@ -183,20 +325,44 @@ function applyClientFilters(data) {
   const fGenre = normalize(els.fGenre?.value);
   const fStatus = normalize(els.fStatus?.value);
   const fNotes = normalize(els.fNotes?.value);
+  const fInglese = els.fInglese?.value || "";
+  const fPrestato = els.fPrestato?.value || "";
+  const fPrestatoA = normalize(els.fPrestatoA?.value);
 
   saveFilters();
 
   return (data || []).filter((book) => {
     const haystack = normalize(
-      [book.title, book.author, book.genre, book.status, book.notes].join(" ")
+      [
+        book.title,
+        book.author,
+        book.genre,
+        book.status,
+        book.notes,
+        book.prestato_a,
+        book.inglese ? "inglese" : "",
+        book.prestato ? "prestato" : ""
+      ].join(" ")
     );
 
     if (quick && !haystack.includes(quick)) return false;
     if (fTitle && !normalize(book.title).includes(fTitle)) return false;
     if (fAuthor && !normalize(book.author).includes(fAuthor)) return false;
-    if (fGenre && !normalize(book.genre).includes(fGenre)) return false;
+    if (fGenre && normalize(book.genre) !== fGenre) return false;
     if (fStatus && normalize(book.status) !== fStatus) return false;
     if (fNotes && !normalize(book.notes).includes(fNotes)) return false;
+
+    if (fInglese !== "") {
+      const isInglese = !!book.inglese;
+      if (String(isInglese) !== fInglese) return false;
+    }
+
+    if (fPrestato !== "") {
+      const isPrestato = !!book.prestato;
+      if (String(isPrestato) !== fPrestato) return false;
+    }
+
+    if (fPrestatoA && !normalize(book.prestato_a).includes(fPrestatoA)) return false;
 
     return true;
   });
@@ -242,7 +408,7 @@ function renderBooks(data) {
   if (!pageItems.length) {
     els.books.innerHTML = `
       <tr>
-        <td colspan="6" class="empty-row">Nessun libro trovato.</td>
+        <td colspan="9" class="empty-row">Nessun libro trovato.</td>
       </tr>
     `;
     return;
@@ -255,6 +421,9 @@ function renderBooks(data) {
         <td>${sanitize(book.author || "")}</td>
         <td>${sanitize(book.genre || "")}</td>
         <td>${sanitize(book.status || "")}</td>
+        <td>${book.inglese ? "Sì" : "No"}</td>
+        <td>${book.prestato ? "Sì" : "No"}</td>
+        <td>${sanitize(book.prestato_a || "")}</td>
         <td>${sanitize(book.notes || "")}</td>
         <td class="row-actions">
           <button type="button" class="secondary" data-edit="${sanitize(book.id || "")}">Modifica</button>
@@ -276,7 +445,7 @@ async function fetchBooks() {
   try {
     const { data, error } = await sb
       .from("books")
-      .select("id, title, author, genre, status, notes, created_at")
+      .select("id, title, author, genre, status, notes, inglese, prestato, prestato_a, created_at")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -300,9 +469,17 @@ async function saveBook() {
   const genre = els.genre?.value.trim() || "";
   const status = els.status?.value || "Da leggere";
   const notes = els.notes?.value.trim() || "";
+  const inglese = !!els.inglese?.checked;
+  const prestato = !!els.prestato?.checked;
+  const prestatoA = els.prestatoA?.value.trim() || "";
 
   if (!title) {
     showMessage("Il titolo è obbligatorio.", "error");
+    return;
+  }
+
+  if (prestatoA && !prestato) {
+    showMessage("Hai inserito 'Prestato a' ma il libro non è segnato come prestato.", "error");
     return;
   }
 
@@ -311,7 +488,17 @@ async function saveBook() {
     return;
   }
 
-  const payload = { title, author, genre, status, notes };
+  const payload = {
+    title,
+    author,
+    genre,
+    status,
+    notes,
+    inglese,
+    prestato,
+    prestato_a: prestato ? prestatoA : ""
+  };
+
   const wasEditing = !!editingBookId;
 
   try {
@@ -358,8 +545,12 @@ function editBook(id) {
   if (els.genre) els.genre.value = book.genre || "";
   if (els.status) els.status.value = book.status || "Da leggere";
   if (els.notes) els.notes.value = book.notes || "";
+  if (els.inglese) els.inglese.checked = !!book.inglese;
+  if (els.prestato) els.prestato.checked = !!book.prestato;
+  if (els.prestatoA) els.prestatoA.value = book.prestato_a || "";
 
-  window.scrollTo({ top: 0, behavior: "smooth" }); }
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
 
 async function deleteBook(id) {
   const confirmed = window.confirm("Vuoi eliminare questo libro?");
@@ -392,7 +583,14 @@ async function deleteBook(id) {
 function fillFieldsFromBookData({ title = "", author = "", genre = "" }) {
   if (title && els.title) els.title.value = title;
   if (author && els.author) els.author.value = author;
-  if (genre && els.genre) els.genre.value = genre; }
+
+  if (genre && els.genre) {
+    const existingGenre = GENRES.find((g) => normalize(g) === normalize(genre));
+    if (existingGenre) {
+      els.genre.value = existingGenre;
+    }
+  }
+}
 
 function setManualIsbn(value) {
   if (els.manualIsbn && value) {
@@ -423,7 +621,8 @@ function looksLatin(text = "") {
 function isPreferredReadableDoc(doc) {
   const title = String(doc?.title || "");
   const author = String(doc?.author_name?.[0] || "");
-  return looksLatin(title) && looksLatin(author); }
+  return looksLatin(title) && looksLatin(author);
+}
 
 function getPreferredDocScore(doc) {
   let score = 0;
@@ -468,7 +667,8 @@ function isReturnedBookReadable(book) {
   if (!book) return false;
   const title = String(book.title || "");
   const author = String(book.author || "");
-  return !containsCyrillic(title) && !containsCyrillic(author); }
+  return !containsCyrillic(title) && !containsCyrillic(author);
+}
 
 async function searchByManualIsbn() {
   clearMessage();
@@ -980,6 +1180,36 @@ async function fetchJsonWithTimeout(url, timeout = 10000) {
   }
 }
 
+function mapOpenLibraryGenre(subject) {
+  const s = normalize(subject);
+
+  if (!s) return "";
+  if (s.includes("fantasy")) return "Fantasy";
+  if (s.includes("science fiction")) return "Fantascienza";
+  if (s.includes("thriller")) return "Thriller";
+  if (s.includes("horror")) return "Horror";
+  if (s.includes("poetry")) return "Poesia";
+  if (s.includes("biography")) return "Biografia";
+  if (s.includes("autobiography")) return "Autobiografia";
+  if (s.includes("history")) return "Storico";
+  if (s.includes("philosophy")) return "Filosofia";
+  if (s.includes("religion")) return "Religione";
+  if (s.includes("art")) return "Arte";
+  if (s.includes("comic")) return "Fumetto";
+  if (s.includes("manga")) return "Manga";
+  if (s.includes("young adult")) return "Young Adult";
+  if (s.includes("children")) return "Libro per ragazzi";
+  if (s.includes("romance")) return "Romance";
+  if (s.includes("detective")) return "Giallo";
+  if (s.includes("crime")) return "Noir";
+  if (s.includes("adventure")) return "Avventura";
+  if (s.includes("classic")) return "Classici";
+  if (s.includes("drama")) return "Teatro";
+  if (s.includes("essay")) return "Saggio";
+
+  return "";
+}
+
 async function lookupBookByIsbn(isbn) {
   const url = `https://openlibrary.org/search.json?isbn=${encodeURIComponent(isbn)}`;
   const data = await fetchJsonWithTimeout(url, 10000);
@@ -988,10 +1218,12 @@ async function lookupBookByIsbn(isbn) {
 
   if (!doc) return null;
 
+  const mappedGenre = mapOpenLibraryGenre(doc.subject?.[0] || "");
+
   return {
     title: doc.title || "",
     author: doc.author_name?.[0] || "",
-    genre: doc.subject?.[0] || ""
+    genre: mappedGenre || ""
   };
 }
 
@@ -1007,10 +1239,12 @@ async function lookupBookByTitleAuthor(title, author) {
 
   if (!doc) return null;
 
+  const mappedGenre = mapOpenLibraryGenre(doc.subject?.[0] || "");
+
   return {
     title: doc.title || title || "",
     author: doc.author_name?.[0] || author || "",
-    genre: doc.subject?.[0] || ""
+    genre: mappedGenre || ""
   };
 }
 
@@ -1059,7 +1293,7 @@ async function analyzeCoverWithAI(file) {
   return {
     title: data.title || "",
     author: data.author || "",
-    genre: data.genre || ""
+    genre: mapOpenLibraryGenre(data.genre || "")
   };
 }
 
@@ -1230,6 +1464,12 @@ function bindStaticEvents() {
     });
   });
 
+  els.prestato?.addEventListener("change", () => {
+    if (!els.prestato?.checked && els.prestatoA) {
+      els.prestatoA.value = "";
+    }
+  });
+
   els.books?.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
@@ -1279,6 +1519,7 @@ function bindStaticEvents() {
 
 async function bootstrap() {
   try {
+    populateGenreSelects();
     loadFilters();
     hideBooks();
     clearScanArea();
