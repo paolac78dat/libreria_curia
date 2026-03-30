@@ -65,21 +65,55 @@
                 <select id="genre">
                   <option value="">Seleziona genere</option>
                   <option>Romanzo</option>
+                  <option>Romanzo classico</option>
+                  <option>Romanzo contemporaneo</option>
+                  <option>Romanzo storico</option>
+                  <option>Romanzo d'avventura</option>
+                  <option>Romanzo di formazione</option>
+                  <option>Romanzo psicologico</option>
+                  <option>Romanzo epistolare</option>
                   <option>Giallo</option>
                   <option>Thriller</option>
+                  <option>Noir</option>
+                  <option>Poliziesco</option>
                   <option>Fantasy</option>
+                  <option>Fantascienza</option>
+                  <option>Distopico</option>
                   <option>Romance</option>
-                  <option>Saggio</option>
-                  <option>Libro per ragazzi</option>
-                  <option>Fiabe</option>
-                  <option>Fumetto</option>
-                  <option>Storico</option>
-                  <option>Biografia</option>
-                  <option>Avventura</option>
                   <option>Horror</option>
+                  <option>Gotico</option>
+                  <option>Avventura</option>
                   <option>Classici</option>
+                  <option>Racconti</option>
+                  <option>Novella</option>
+                  <option>Fiabe</option>
+                  <option>Favole</option>
                   <option>Poesia</option>
+                  <option>Teatro</option>
+                  <option>Saggio</option>
+                  <option>Biografia</option>
+                  <option>Autobiografia</option>
+                  <option>Diario</option>
+                  <option>Memorie</option>
+                  <option>Libro per ragazzi</option>
+                  <option>Young Adult</option>
+                  <option>Fumetto</option>
+                  <option>Graphic novel</option>
+                  <option>Manga</option>
+                  <option>Storico</option>
+                  <option>Mitologia</option>
+                  <option>Filosofia</option>
+                  <option>Religione</option>
+                  <option>Arte</option>
+                  <option>Musica</option>
+                  <option>Scienza</option>
                   <option>Manuale</option>
+                  <option>Didattica</option>
+                  <option>Psicologia</option>
+                  <option>Crescita personale</option>
+                  <option>Attualità</option>
+                  <option>Economia</option>
+                  <option>Politica</option>
                   <option>Altro</option>
                 </select>
               </label>
@@ -91,6 +125,29 @@
                   <option>In lettura</option>
                   <option>Letto</option>
                 </select>
+              </label>
+            </div>
+
+            <div class="grid two-col">
+              <label class="checkbox-label">
+                <span>Lingua</span>
+                <label>
+                  <input type="checkbox" id="inglese" />
+                  Libro in inglese
+                </label>
+              </label>
+
+              <label class="checkbox-label">
+                <span>Prestito</span>
+                <label>
+                  <input type="checkbox" id="prestato" />
+                  Libro prestato
+                </label>
+              </label>
+
+              <label>
+                <span>Prestato a</span>
+                <input id="prestatoA" placeholder="Nome persona" />
               </label>
             </div>
 
@@ -202,7 +259,60 @@
 
               <label>
                 <span>Genere</span>
-                <input id="fGenre" placeholder="Filtro genere" />
+                <select id="fGenre">
+                  <option value="">Tutti i generi</option>
+                  <option>Romanzo</option>
+                  <option>Romanzo classico</option>
+                  <option>Romanzo contemporaneo</option>
+                  <option>Romanzo storico</option>
+                  <option>Romanzo d'avventura</option>
+                  <option>Romanzo di formazione</option>
+                  <option>Romanzo psicologico</option>
+                  <option>Romanzo epistolare</option>
+                  <option>Giallo</option>
+                  <option>Thriller</option>
+                  <option>Noir</option>
+                  <option>Poliziesco</option>
+                  <option>Fantasy</option>
+                  <option>Fantascienza</option>
+                  <option>Distopico</option>
+                  <option>Romance</option>
+                  <option>Horror</option>
+                  <option>Gotico</option>
+                  <option>Avventura</option>
+                  <option>Classici</option>
+                  <option>Racconti</option>
+                  <option>Novella</option>
+                  <option>Fiabe</option>
+                  <option>Favole</option>
+                  <option>Poesia</option>
+                  <option>Teatro</option>
+                  <option>Saggio</option>
+                  <option>Biografia</option>
+                  <option>Autobiografia</option>
+                  <option>Diario</option>
+                  <option>Memorie</option>
+                  <option>Libro per ragazzi</option>
+                  <option>Young Adult</option>
+                  <option>Fumetto</option>
+                  <option>Graphic novel</option>
+                  <option>Manga</option>
+                  <option>Storico</option>
+                  <option>Mitologia</option>
+                  <option>Filosofia</option>
+                  <option>Religione</option>
+                  <option>Arte</option>
+                  <option>Musica</option>
+                  <option>Scienza</option>
+                  <option>Manuale</option>
+                  <option>Didattica</option>
+                  <option>Psicologia</option>
+                  <option>Crescita personale</option>
+                  <option>Attualità</option>
+                  <option>Economia</option>
+                  <option>Politica</option>
+                  <option>Altro</option>
+                </select>
               </label>
 
               <label>
@@ -213,6 +323,29 @@
                   <option>In lettura</option>
                   <option>Letto</option>
                 </select>
+              </label>
+
+              <label>
+                <span>Lingua</span>
+                <select id="fInglese">
+                  <option value="">Tutte</option>
+                  <option value="true">Solo in inglese</option>
+                  <option value="false">Solo non in inglese</option>
+                </select>
+              </label>
+
+              <label>
+                <span>Prestito</span>
+                <select id="fPrestato">
+                  <option value="">Tutti</option>
+                  <option value="true">Solo prestati</option>
+                  <option value="false">Solo non prestati</option>
+                </select>
+              </label>
+
+              <label>
+                <span>Prestato a</span>
+                <input id="fPrestatoA" placeholder="Filtro nome persona" />
               </label>
 
               <label>
@@ -267,6 +400,9 @@
                     <th>Autore</th>
                     <th>Genere</th>
                     <th>Stato</th>
+                    <th>Inglese</th>
+                    <th>Prestato</th>
+                    <th>Prestato a</th>
                     <th>Note</th>
                     <th>Azioni</th>
                   </tr>
