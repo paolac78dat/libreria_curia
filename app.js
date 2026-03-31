@@ -192,14 +192,8 @@ function saveFilters() {
     const payload = {};
     filterKeys.forEach((key) => {
       if (!els[key]) return;
-
-      if (els[key] instanceof HTMLInputElement && els[key].type === "checkbox") {
-        payload[key] = els[key].checked;
-      } else {
-        payload[key] = els[key].value;
-      }
+      payload[key] = els[key].value;
     });
-
     localStorage.setItem("biblioteca-filters", JSON.stringify(payload));
   } catch (error) {
     console.warn("Impossibile salvare i filtri", error);
@@ -213,11 +207,7 @@ function loadFilters() {
 
     const parsed = JSON.parse(raw);
     filterKeys.forEach((key) => {
-      if (!els[key] || parsed[key] === undefined) return;
-
-      if (els[key] instanceof HTMLInputElement && els[key].type === "checkbox") {
-        els[key].checked = !!parsed[key];
-      } else {
+      if (els[key] && parsed[key] !== undefined) {
         els[key].value = parsed[key];
       }
     });
@@ -228,14 +218,7 @@ function loadFilters() {
 }
 
 function hasActiveFilters() {
-  return filterKeys.some((key) => {
-    const el = els[key];
-    if (!el) return false;
-    if (el instanceof HTMLInputElement && el.type === "checkbox") {
-      return el.checked;
-    }
-    return normalize(el.value);
-  });
+  return filterKeys.some((key) => normalize(els[key]?.value));
 }
 
 function showBooks() {
@@ -250,13 +233,7 @@ function hideBooks() {
 
 function resetFilters() {
   filterKeys.forEach((key) => {
-    if (!els[key]) return;
-
-    if (els[key] instanceof HTMLInputElement && els[key].type === "checkbox") {
-      els[key].checked = false;
-    } else {
-      els[key].value = "";
-    }
+    if (els[key]) els[key].value = "";
   });
 
   if (els.fStatus) els.fStatus.value = "";
@@ -325,8 +302,8 @@ function applyClientFilters(data) {
   const fGenre = normalize(els.fGenre?.value);
   const fStatus = normalize(els.fStatus?.value);
   const fNotes = normalize(els.fNotes?.value);
-  const fInglese = els.fInglese?.value || "";
-  const fPrestato = els.fPrestato?.value || "";
+  const fInglese = normalize(els.fInglese?.value);
+  const fPrestato = normalize(els.fPrestato?.value);
   const fPrestatoA = normalize(els.fPrestatoA?.value);
 
   saveFilters();
@@ -348,7 +325,7 @@ function applyClientFilters(data) {
     if (quick && !haystack.includes(quick)) return false;
     if (fTitle && !normalize(book.title).includes(fTitle)) return false;
     if (fAuthor && !normalize(book.author).includes(fAuthor)) return false;
-    if (fGenre && normalize(book.genre) !== fGenre) return false;
+    if (fGenre && !normalize(book.genre).includes(fGenre)) return false;
     if (fStatus && normalize(book.status) !== fStatus) return false;
     if (fNotes && !normalize(book.notes).includes(fNotes)) return false;
 
@@ -588,6 +565,8 @@ function fillFieldsFromBookData({ title = "", author = "", genre = "" }) {
     const existingGenre = GENRES.find((g) => normalize(g) === normalize(genre));
     if (existingGenre) {
       els.genre.value = existingGenre;
+    } else {
+      els.genre.value = "";
     }
   }
 }
@@ -710,8 +689,8 @@ async function searchByManualIsbn() {
     setScanStatus(`ISBN ${isbn} non trovato online.`);
   } catch (error) {
     console.error("Errore ricerca ISBN manuale:", error);
-    showMessage(`Errore durante la ricerca ISBN: ${error.message || error}`, "error");
-    setScanStatus(`Errore durante la ricerca ISBN: ${error.message || error}`);
+    showMessage("Errore durante la ricerca ISBN.", "error");
+    setScanStatus("Errore durante la ricerca ISBN.");
   }
 }
 
@@ -803,6 +782,7 @@ function stopBarcodeScanner() {
 
   barcodeControls = null;
   barcodeReader = null;
+  barcodeBusy = false;
 
   if (els.barcodeVideo && els.barcodeVideo.srcObject) {
     const stream = els.barcodeVideo.srcObject;
@@ -824,52 +804,10 @@ function chooseBestVideoDevice(devices = []) {
   return preferred || devices[0];
 }
 
-async function handleDetectedIsbn(isbn) {
-  barcodeBusy = true;
-
-  try {
-    setManualIsbn(isbn);
-    setScanStatus(`Barcode letto: ${isbn}`);
-    stopBarcodeScanner();
-
-    if (els.manualIsbn) {
-      els.manualIsbn.value = isbn;
-    }
-
-    clearMessage();
-    setScanStatus(`Cerco il libro con ISBN ${isbn}...`);
-
-    const found = await lookupBookByIsbn(isbn);
-
-    if (found) {
-      if (!isReturnedBookReadable(found)) {
-        showMessage("Ho trovato solo un'edizione in una lingua non desiderata. Inserisci i campi manualmente o prova la copertina.", "info");
-        setScanStatus(`ISBN ${isbn} trovato, ma il risultato non è nella lingua desiderata.`);
-        return;
-      }
-
-      fillFieldsFromBookData(found);
-      showMessage("Libro trovato da barcode.", "success");
-      setScanStatus(`ISBN ${isbn} trovato.`);
-      return;
-    }
-
-    showMessage("Barcode letto, ma nessun libro trovato online.", "info");
-    setScanStatus(`ISBN ${isbn} non trovato online.`);
-  } catch (error) {
-    console.error("Errore dopo lettura barcode:", error);
-    showMessage(`Barcode letto (${isbn}) ma errore nella ricerca del libro.`, "error");
-    setScanStatus(`Barcode letto (${isbn}) ma ricerca non riuscita.`);
-  } finally {
-    barcodeBusy = false;
-  }
-}
-
 async function startBarcodeScanner() {
   clearMessage();
   clearScanArea();
   stopBarcodeScanner();
-  barcodeBusy = false;
 
   if (!els.barcodeVideo || !els.barcodeScanner) {
     showMessage("Elementi scanner barcode non trovati nella pagina.", "error");
@@ -915,20 +853,22 @@ async function startBarcodeScanner() {
         const rawText = String(result?.getText?.() || result?.text || "").trim();
         const isbn = cleanManualIsbn(rawText);
 
-        console.log("Barcode raw letto:", rawText);
-
         if (isValidIsbnFormat(isbn)) {
-          await handleDetectedIsbn(isbn);
-          return;
+          barcodeBusy = true;
+          setManualIsbn(isbn);
+          setScanStatus(`Barcode letto: ${isbn}`);
+          stopBarcodeScanner();
+          await searchByManualIsbn();
         } else if (rawText) {
           const maybeDigits = rawText.replace(/[^\dXx]/g, "");
           if (isValidIsbnFormat(maybeDigits)) {
-            await handleDetectedIsbn(maybeDigits.toUpperCase());
-            return;
+            barcodeBusy = true;
+            setManualIsbn(maybeDigits.toUpperCase());
+            setScanStatus(`Barcode letto: ${maybeDigits.toUpperCase()}`);
+            stopBarcodeScanner();
+            await searchByManualIsbn();
           }
-        }
-
-        if (error && error.name !== "NotFoundException") {
+        } else if (error && error.name !== "NotFoundException") {
           console.warn("ZXing callback error:", error);
         }
       }
@@ -936,7 +876,6 @@ async function startBarcodeScanner() {
   } catch (error) {
     console.error("Errore scanner barcode:", error);
     stopBarcodeScanner();
-    barcodeBusy = false;
     setScanStatus("Errore avvio scanner barcode.");
     showMessage(error.message || "Errore durante l'avvio dello scanner barcode.", "error");
   }
@@ -1342,7 +1281,6 @@ async function handleScanCoverFile(file) {
 
   clearMessage();
   stopBarcodeScanner();
-  barcodeBusy = false;
   setScanStatus("Analisi copertina in corso...");
 
   let previewUrl = "";
@@ -1524,7 +1462,6 @@ function bindStaticEvents() {
 
   els.scanCoverBtn?.addEventListener("click", () => {
     stopBarcodeScanner();
-    barcodeBusy = false;
     els.scanImageInput?.click();
   });
 
@@ -1534,7 +1471,6 @@ function bindStaticEvents() {
 
   els.stopBarcodeBtn?.addEventListener("click", () => {
     stopBarcodeScanner();
-    barcodeBusy = false;
     setScanStatus("Scanner barcode chiuso.");
   });
 
@@ -1567,7 +1503,6 @@ async function bootstrap() {
     hideBooks();
     clearScanArea();
     stopBarcodeScanner();
-    barcodeBusy = false;
 
     if (els.pageSizeSelect) {
       pageSize = Number(els.pageSizeSelect.value) || 20;
