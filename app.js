@@ -14,6 +14,7 @@ let sameIsbnHits = 0;
 let barcodeAcceptedAt = 0;
 let firstDetectionAt = 0;
 let lastDetectionAt = 0;
+let stopNativePolling = null;
 
 const REQUIRED_ISBN_HITS = 3;
 const MIN_STABLE_DETECTION_MS = 300;
@@ -195,6 +196,14 @@ function sanitize(str = "") {
 
 function normalize(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function cleanText(text) {
+  if (!text) return "";
+  return String(text)
+    .replace(/\s+/g, " ")
+    .replace(/[‐-‒–—―]/g, "-")
+    .trim();
 }
 
 function saveFilters() {
@@ -568,8 +577,8 @@ async function deleteBook(id) {
 }
 
 function fillFieldsFromBookData({ title = "", author = "", genre = "" }) {
-  if (title && els.title) els.title.value = title;
-  if (author && els.author) els.author.value = author;
+  if (title && els.title) els.title.value = cleanText(title);
+  if (author && els.author) els.author.value = cleanText(author);
 
   if (genre && els.genre) {
     const existingGenre = GENRES.find((g) => normalize(g) === normalize(genre));
@@ -579,6 +588,14 @@ function fillFieldsFromBookData({ title = "", author = "", genre = "" }) {
       els.genre.value = "";
     }
   }
+}
+
+function fillBookFields(title, author, genre = "") {
+  fillFieldsFromBookData({
+    title: cleanText(title),
+    author: cleanText(author),
+    genre: cleanText(genre)
+  });
 }
 
 function setManualIsbn(value) {
@@ -681,6 +698,147 @@ function isReturnedBookReadable(book) {
   return !containsUnsupportedScript(title) && !containsUnsupportedScript(author);
 }
 
+function mapOpenLibraryGenre(subject) {
+  const s = normalize(subject);
+
+  if (!s) return "";
+  if (s.includes("fantasy")) return "Fantasy";
+  if (s.includes("science fiction")) return "Fantascienza";
+  if (s.includes("thriller")) return "Thriller";
+  if (s.includes("horror")) return "Horror";
+  if (s.includes("poetry")) return "Poesia";
+  if (s.includes("biography")) return "Biografia";
+  if (s.includes("autobiography")) return "Autobiografia";
+  if (s.includes("history")) return "Storico";
+  if (s.includes("philosophy")) return "Filosofia";
+  if (s.includes("religion")) return "Religione";
+  if (s.includes("art")) return "Arte";
+  if (s.includes("comic")) return "Fumetto";
+  if (s.includes("manga")) return "Manga";
+  if (s.includes("young adult")) return "Young Adult";
+  if (s.includes("children")) return "Libro per ragazzi";
+  if (s.includes("romance")) return "Romance";
+  if (s.includes("detective")) return "Giallo";
+  if (s.includes("crime")) return "Noir";
+  if (s.includes("adventure")) return "Avventura";
+  if (s.includes("classic")) return "Classici";
+  if (s.includes("drama")) return "Teatro";
+  if (s.includes("essay")) return "Saggio";
+
+  return "";
+}
+
+async function fetchJsonWithTimeout(url, timeout = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) return null;
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function lookupBookByIsbnOpenLibrary(isbn) {
+  const url = `https://openlibrary.org/isbn/${encodeURIComponent(isbn)}.json`;
+  const data = await fetchJsonWithTimeout(url, 10000);
+  if (!data) return null;
+
+  let author = "";
+  if (Array.isArray(data.authors) && data.authors.length > 0 && data.authors[0]?.key) {
+    const authorData = await fetchJsonWithTimeout(`https://openlibrary.org${data.authors[0].key}.json`, 10000);
+    author = cleanText(authorData?.name || "");
+  }
+
+  return {
+    title: cleanText(data.title || ""),
+    author,
+    genre: ""
+  };
+}
+
+async function lookupBookByIsbnSearchOpenLibrary(isbn) {
+  const url = `https://openlibrary.org/search.json?isbn=${encodeURIComponent(isbn)}`;
+  const data = await fetchJsonWithTimeout(url, 10000);
+  const docs = data?.docs || [];
+  const doc = pickBestOpenLibraryDoc(docs);
+
+  if (!doc) return null;
+
+  const mappedGenre = mapOpenLibraryGenre(doc.subject?.[0] || "");
+
+  return {
+    title: cleanText(doc.title || ""),
+    author: cleanText(doc.author_name?.[0] || ""),
+    genre: mappedGenre || ""
+  };
+}
+
+async function lookupBookByIsbnGoogleBooks(isbn) {
+  const url = `https://www.googleapis.com/books/v1/volumes?q=isbn:${encodeURIComponent(isbn)}`;
+  const data = await fetchJsonWithTimeout(url, 10000);
+  const info = data?.items?.[0]?.volumeInfo;
+
+  if (!info) return null;
+
+  let genre = "";
+  if (Array.isArray(info.categories) && info.categories.length > 0) {
+    genre = mapOpenLibraryGenre(info.categories[0] || "");
+  }
+
+  return {
+    title: cleanText(info.title || ""),
+    author: cleanText((info.authors || []).join(", ")),
+    genre: cleanText(genre || "")
+  };
+}
+
+async function lookupBookByIsbn(isbn) {
+  const attempts = [
+    () => lookupBookByIsbnOpenLibrary(isbn),
+    () => lookupBookByIsbnSearchOpenLibrary(isbn),
+    () => lookupBookByIsbnGoogleBooks(isbn)
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const found = await attempt();
+      if (found && found.title) {
+        if (isReturnedBookReadable(found)) {
+          return found;
+        }
+      }
+    } catch (error) {
+      console.warn("Tentativo ricerca ISBN fallito:", error);
+    }
+  }
+
+  return null;
+}
+
+async function lookupBookByTitleAuthor(title, author) {
+  const params = new URLSearchParams();
+  if (title) params.set("title", title);
+  if (author) params.set("author", author);
+
+  const url = `https://openlibrary.org/search.json?${params.toString()}`;
+  const data = await fetchJsonWithTimeout(url, 10000);
+  const docs = data?.docs || [];
+  const doc = pickBestOpenLibraryDoc(docs);
+
+  if (!doc) return null;
+
+  const mappedGenre = mapOpenLibraryGenre(doc.subject?.[0] || "");
+
+  return {
+    title: cleanText(doc.title || title || ""),
+    author: cleanText(doc.author_name?.[0] || author || ""),
+    genre: mappedGenre || ""
+  };
+}
+
 async function searchByManualIsbn() {
   clearMessage();
 
@@ -704,15 +862,9 @@ async function searchByManualIsbn() {
     const found = await lookupBookByIsbn(isbn);
 
     if (found) {
-      if (!isReturnedBookReadable(found)) {
-        showMessage("Ho trovato solo un'edizione in una lingua non desiderata. Inserisci i campi manualmente o prova la copertina.", "info");
-        setScanStatus(`ISBN ${isbn} trovato, ma il risultato non è nella lingua desiderata.`);
-        return;
-      }
-
       setManualIsbn(isbn);
       fillFieldsFromBookData(found);
-      showMessage("Libro trovato da ISBN manuale.", "success");
+      showMessage("Libro trovato da ISBN.", "success");
       setScanStatus(`ISBN ${isbn} trovato.`);
       return;
     }
@@ -854,6 +1006,11 @@ function stopBarcodeScanner() {
   barcodeReader = null;
   resetBarcodeDetectionState();
 
+  if (typeof stopNativePolling === "function") {
+    stopNativePolling();
+    stopNativePolling = null;
+  }
+
   if (els.barcodeVideo && els.barcodeVideo.srcObject) {
     const stream = els.barcodeVideo.srcObject;
     const tracks = stream.getTracks ? stream.getTracks() : [];
@@ -929,7 +1086,7 @@ async function detectBarcodeNativeFromVideo(videoElement) {
     }
 
     return null;
-  } catch (error) {
+  } catch {
     return null;
   }
 }
@@ -959,13 +1116,8 @@ async function handleStableDetectedIsbn(isbn) {
   const stableFor = firstDetectionAt ? now - firstDetectionAt : 0;
   setScanStatus(`Barcode rilevato: ${isbn} (${sameIsbnHits}/${REQUIRED_ISBN_HITS})`);
 
-  if (sameIsbnHits < REQUIRED_ISBN_HITS) {
-    return;
-  }
-
-  if (stableFor < MIN_STABLE_DETECTION_MS) {
-    return;
-  }
+  if (sameIsbnHits < REQUIRED_ISBN_HITS) return;
+  if (stableFor < MIN_STABLE_DETECTION_MS) return;
 
   barcodeBusy = true;
   barcodeAcceptedAt = now;
@@ -977,7 +1129,7 @@ async function handleStableDetectedIsbn(isbn) {
 }
 
 function startNativeBarcodePolling() {
-  if (!els.barcodeVideo) return;
+  if (!els.barcodeVideo) return null;
 
   let cancelled = false;
 
@@ -1006,8 +1158,6 @@ function startNativeBarcodePolling() {
     cancelled = true;
   };
 }
-
-let stopNativePolling = null;
 
 async function startBarcodeScanner() {
   clearMessage();
@@ -1085,10 +1235,6 @@ async function startBarcodeScanner() {
     );
 
     await applyVideoEnhancements();
-
-    if (typeof stopNativePolling === "function") {
-      stopNativePolling();
-    }
     stopNativePolling = startNativeBarcodePolling();
   } catch (error) {
     console.error("Errore scanner barcode:", error);
@@ -1273,20 +1419,6 @@ async function detectIsbnFromImage(file) {
   }
 }
 
-function extractIsbnFromText(text) {
-  const cleaned = String(text || "")
-    .replace(/[\s\-]/g, "")
-    .toUpperCase();
-
-  const match13 = cleaned.match(/97[89]\d{10}/);
-  if (match13) return match13[0];
-
-  const match10 = cleaned.match(/\d{9}[0-9X]/);
-  if (match10) return match10[0];
-
-  return null;
-}
-
 async function loadTesseract() {
   if (window.Tesseract) return window.Tesseract;
 
@@ -1344,13 +1476,28 @@ async function runOcrForIsbn(file) {
   return await runOcr(blob);
 }
 
+function extractIsbnFromText(text) {
+  const cleaned = String(text || "")
+    .replace(/[\s\-]/g, "")
+    .toUpperCase();
+
+  const match13 = cleaned.match(/97[89]\d{10}/);
+  if (match13) return match13[0];
+
+  const match10 = cleaned.match(/\d{9}[0-9X]/);
+  if (match10) return match10[0];
+
+  return null;
+}
+
 function parseCoverText(text) {
   const lines = String(text || "")
     .split("\n")
-    .map((l) => l.trim())
+    .map((l) => cleanText(l))
     .filter((l) => l.length > 2)
     .filter((l) => !/^\d+$/.test(l))
-    .filter((l) => !/^isbn/i.test(l));
+    .filter((l) => !/^isbn/i.test(l))
+    .filter((l) => looksLatin(l));
 
   const candidates = lines
     .filter((l) => l.length < 80)
@@ -1360,87 +1507,6 @@ function parseCoverText(text) {
     raw: candidates.join(" "),
     title: candidates[0] || "",
     author: candidates[1] || ""
-  };
-}
-
-async function fetchJsonWithTimeout(url, timeout = 10000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) return null;
-    return await response.json();
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function mapOpenLibraryGenre(subject) {
-  const s = normalize(subject);
-
-  if (!s) return "";
-  if (s.includes("fantasy")) return "Fantasy";
-  if (s.includes("science fiction")) return "Fantascienza";
-  if (s.includes("thriller")) return "Thriller";
-  if (s.includes("horror")) return "Horror";
-  if (s.includes("poetry")) return "Poesia";
-  if (s.includes("biography")) return "Biografia";
-  if (s.includes("autobiography")) return "Autobiografia";
-  if (s.includes("history")) return "Storico";
-  if (s.includes("philosophy")) return "Filosofia";
-  if (s.includes("religion")) return "Religione";
-  if (s.includes("art")) return "Arte";
-  if (s.includes("comic")) return "Fumetto";
-  if (s.includes("manga")) return "Manga";
-  if (s.includes("young adult")) return "Young Adult";
-  if (s.includes("children")) return "Libro per ragazzi";
-  if (s.includes("romance")) return "Romance";
-  if (s.includes("detective")) return "Giallo";
-  if (s.includes("crime")) return "Noir";
-  if (s.includes("adventure")) return "Avventura";
-  if (s.includes("classic")) return "Classici";
-  if (s.includes("drama")) return "Teatro";
-  if (s.includes("essay")) return "Saggio";
-
-  return "";
-}
-
-async function lookupBookByIsbn(isbn) {
-  const url = `https://openlibrary.org/search.json?isbn=${encodeURIComponent(isbn)}`;
-  const data = await fetchJsonWithTimeout(url, 10000);
-  const docs = data?.docs || [];
-  const doc = pickBestOpenLibraryDoc(docs);
-
-  if (!doc) return null;
-
-  const mappedGenre = mapOpenLibraryGenre(doc.subject?.[0] || "");
-
-  return {
-    title: doc.title || "",
-    author: doc.author_name?.[0] || "",
-    genre: mappedGenre || ""
-  };
-}
-
-async function lookupBookByTitleAuthor(title, author) {
-  const params = new URLSearchParams();
-  if (title) params.set("title", title);
-  if (author) params.set("author", author);
-
-  const url = `https://openlibrary.org/search.json?${params.toString()}`;
-  const data = await fetchJsonWithTimeout(url, 10000);
-  const docs = data?.docs || [];
-  const doc = pickBestOpenLibraryDoc(docs);
-
-  if (!doc) return null;
-
-  const mappedGenre = mapOpenLibraryGenre(doc.subject?.[0] || "");
-
-  return {
-    title: doc.title || title || "",
-    author: doc.author_name?.[0] || author || "",
-    genre: mappedGenre || ""
   };
 }
 
@@ -1487,8 +1553,8 @@ async function analyzeCoverWithAI(file) {
   }
 
   return {
-    title: data.title || "",
-    author: data.author || "",
+    title: cleanText(data.title || ""),
+    author: cleanText(data.author || ""),
     genre: mapOpenLibraryGenre(data.genre || "")
   };
 }
@@ -1529,12 +1595,6 @@ async function handleScanCoverFile(file) {
       const foundByIsbn = await lookupBookByIsbn(isbn);
 
       if (foundByIsbn) {
-        if (!isReturnedBookReadable(foundByIsbn)) {
-          setScanStatus(`ISBN trovato (${isbn}), ma l'edizione trovata non è nella lingua desiderata.`);
-          showMessage("Ho trovato solo un'edizione in una lingua non desiderata. Puoi compilare i campi manualmente o provare la copertina.", "info");
-          return;
-        }
-
         fillFieldsFromBookData(foundByIsbn);
         setScanStatus(`ISBN trovato (${isbn}). Campi compilati automaticamente.`);
         showMessage("Libro riconosciuto da ISBN. Controlla i campi e salva.", "success");
@@ -1686,10 +1746,6 @@ function bindStaticEvents() {
 
   els.scanCoverBtn?.addEventListener("click", () => {
     stopBarcodeScanner();
-    if (typeof stopNativePolling === "function") {
-      stopNativePolling();
-      stopNativePolling = null;
-    }
     els.scanImageInput?.click();
   });
 
@@ -1699,10 +1755,6 @@ function bindStaticEvents() {
 
   els.stopBarcodeBtn?.addEventListener("click", () => {
     stopBarcodeScanner();
-    if (typeof stopNativePolling === "function") {
-      stopNativePolling();
-      stopNativePolling = null;
-    }
     setScanStatus("Scanner barcode chiuso.");
   });
 
@@ -1735,11 +1787,6 @@ async function bootstrap() {
     hideBooks();
     clearScanArea();
     stopBarcodeScanner();
-
-    if (typeof stopNativePolling === "function") {
-      stopNativePolling();
-      stopNativePolling = null;
-    }
 
     if (els.pageSizeSelect) {
       pageSize = Number(els.pageSizeSelect.value) || 20;
