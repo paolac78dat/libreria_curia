@@ -9,6 +9,16 @@ let zxingLoaderPromise = null;
 let barcodeControls = null;
 let barcodeReader = null;
 let barcodeBusy = false;
+let lastDetectedIsbn = "";
+let sameIsbnHits = 0;
+let barcodeAcceptedAt = 0;
+let firstDetectionAt = 0;
+let lastDetectionAt = 0;
+
+const REQUIRED_ISBN_HITS = 3;
+const MIN_STABLE_DETECTION_MS = 350;
+const DETECTION_RESET_MS = 1200;
+const ACCEPT_COOLDOWN_MS = 1800;
 
 const GENRES = [
   "Romanzo",
@@ -728,17 +738,7 @@ function drawImageToCanvas(img, crop = null) {
   canvas.width = sw;
   canvas.height = sh;
 
-  ctx.drawImage(
-    img,
-    sx,
-    sy,
-    sw,
-    sh,
-    0,
-    0,
-    sw,
-    sh
-  );
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
 
   return canvas;
 }
@@ -771,6 +771,54 @@ async function loadZXing() {
   return zxingLoaderPromise;
 }
 
+function ensureBarcodeGuideOverlay() {
+  if (!els.barcodeScanner) return;
+
+  const currentPosition = window.getComputedStyle(els.barcodeScanner).position;
+  if (currentPosition === "static") {
+    els.barcodeScanner.style.position = "relative";
+  }
+
+  let overlay = document.getElementById("barcodeGuideOverlay");
+  if (overlay) return;
+
+  overlay = document.createElement("div");
+  overlay.id = "barcodeGuideOverlay";
+  overlay.style.position = "absolute";
+  overlay.style.left = "50%";
+  overlay.style.top = "50%";
+  overlay.style.transform = "translate(-50%, -50%)";
+  overlay.style.width = "78%";
+  overlay.style.maxWidth = "340px";
+  overlay.style.height = "110px";
+  overlay.style.border = "3px solid rgba(255,255,255,0.95)";
+  overlay.style.borderRadius = "14px";
+  overlay.style.boxShadow = "0 0 0 9999px rgba(0,0,0,0.18)";
+  overlay.style.pointerEvents = "none";
+  overlay.style.zIndex = "5";
+  overlay.style.boxSizing = "border-box";
+
+  const line = document.createElement("div");
+  line.style.position = "absolute";
+  line.style.left = "8%";
+  line.style.right = "8%";
+  line.style.top = "50%";
+  line.style.height = "2px";
+  line.style.transform = "translateY(-50%)";
+  line.style.background = "rgba(255,255,255,0.9)";
+  overlay.appendChild(line);
+
+  els.barcodeScanner.appendChild(overlay);
+}
+
+function resetBarcodeDetectionState() {
+  barcodeBusy = false;
+  lastDetectedIsbn = "";
+  sameIsbnHits = 0;
+  firstDetectionAt = 0;
+  lastDetectionAt = 0;
+}
+
 function stopBarcodeScanner() {
   try {
     if (barcodeControls && typeof barcodeControls.stop === "function") {
@@ -782,7 +830,7 @@ function stopBarcodeScanner() {
 
   barcodeControls = null;
   barcodeReader = null;
-  barcodeBusy = false;
+  resetBarcodeDetectionState();
 
   if (els.barcodeVideo && els.barcodeVideo.srcObject) {
     const stream = els.barcodeVideo.srcObject;
@@ -804,10 +852,92 @@ function chooseBestVideoDevice(devices = []) {
   return preferred || devices[0];
 }
 
+async function applyVideoEnhancements() {
+  try {
+    if (!els.barcodeVideo) return;
+
+    els.barcodeVideo.setAttribute("playsinline", "true");
+    els.barcodeVideo.setAttribute("autoplay", "true");
+    els.barcodeVideo.setAttribute("muted", "true");
+    els.barcodeVideo.playsInline = true;
+    els.barcodeVideo.autoplay = true;
+    els.barcodeVideo.muted = true;
+
+    const stream = els.barcodeVideo.srcObject;
+    const track = stream?.getVideoTracks?.()?.[0];
+    if (!track || !track.getCapabilities) return;
+
+    const caps = track.getCapabilities();
+    const advanced = [];
+
+    if (caps.focusMode && caps.focusMode.includes("continuous")) {
+      advanced.push({ focusMode: "continuous" });
+    }
+
+    if (caps.exposureMode && caps.exposureMode.includes("continuous")) {
+      advanced.push({ exposureMode: "continuous" });
+    }
+
+    const constraints = {};
+    if (advanced.length) {
+      constraints.advanced = advanced;
+    }
+
+    if (Object.keys(constraints).length > 0) {
+      await track.applyConstraints(constraints);
+    }
+  } catch (err) {
+    console.warn("Impossibile applicare miglioramenti video:", err);
+  }
+}
+
+async function handleStableDetectedIsbn(isbn) {
+  const now = Date.now();
+
+  if (barcodeBusy) return;
+  if (now - barcodeAcceptedAt < ACCEPT_COOLDOWN_MS) return;
+
+  if (lastDetectionAt && now - lastDetectionAt > DETECTION_RESET_MS) {
+    lastDetectedIsbn = "";
+    sameIsbnHits = 0;
+    firstDetectionAt = 0;
+  }
+
+  lastDetectionAt = now;
+
+  if (isbn === lastDetectedIsbn) {
+    sameIsbnHits++;
+  } else {
+    lastDetectedIsbn = isbn;
+    sameIsbnHits = 1;
+    firstDetectionAt = now;
+  }
+
+  const stableFor = firstDetectionAt ? now - firstDetectionAt : 0;
+  setScanStatus(`Barcode rilevato: ${isbn} (${sameIsbnHits}/${REQUIRED_ISBN_HITS})`);
+
+  if (sameIsbnHits < REQUIRED_ISBN_HITS) {
+    return;
+  }
+
+  if (stableFor < MIN_STABLE_DETECTION_MS) {
+    return;
+  }
+
+  barcodeBusy = true;
+  barcodeAcceptedAt = now;
+
+  setManualIsbn(isbn);
+  setScanStatus(`Barcode confermato: ${isbn}`);
+  stopBarcodeScanner();
+  await searchByManualIsbn();
+}
+
 async function startBarcodeScanner() {
   clearMessage();
   clearScanArea();
   stopBarcodeScanner();
+  resetBarcodeDetectionState();
 
   if (!els.barcodeVideo || !els.barcodeScanner) {
     showMessage("Elementi scanner barcode non trovati nella pagina.", "error");
@@ -815,6 +945,8 @@ async function startBarcodeScanner() {
   }
 
   try {
+    ensureBarcodeGuideOverlay();
+
     setScanStatus("Avvio scanner barcode...");
     els.barcodeScanner.classList.remove("hidden");
 
@@ -838,7 +970,7 @@ async function startBarcodeScanner() {
       console.warn("Impossibile elencare le camere:", error);
     }
 
-    setScanStatus("Inquadra solo il barcode ISBN da vicino.");
+    setScanStatus("Centra il barcode nel riquadro, tieni fermo il telefono e avvicinati.");
 
     barcodeControls = await barcodeReader.decodeFromVideoDevice(
       selectedDeviceId,
@@ -851,28 +983,32 @@ async function startBarcodeScanner() {
         if (barcodeBusy) return;
 
         const rawText = String(result?.getText?.() || result?.text || "").trim();
-        const isbn = cleanManualIsbn(rawText);
-
-        if (isValidIsbnFormat(isbn)) {
-          barcodeBusy = true;
-          setManualIsbn(isbn);
-          setScanStatus(`Barcode letto: ${isbn}`);
-          stopBarcodeScanner();
-          await searchByManualIsbn();
-        } else if (rawText) {
-          const maybeDigits = rawText.replace(/[^\dXx]/g, "");
-          if (isValidIsbnFormat(maybeDigits)) {
-            barcodeBusy = true;
-            setManualIsbn(maybeDigits.toUpperCase());
-            setScanStatus(`Barcode letto: ${maybeDigits.toUpperCase()}`);
-            stopBarcodeScanner();
-            await searchByManualIsbn();
+        if (!rawText) {
+          if (error && error.name !== "NotFoundException") {
+            console.warn("ZXing callback error:", error);
           }
-        } else if (error && error.name !== "NotFoundException") {
+          return;
+        }
+
+        const isbn = cleanManualIsbn(rawText);
+        if (isValidIsbnFormat(isbn)) {
+          await handleStableDetectedIsbn(isbn);
+          return;
+        }
+
+        const maybeDigits = rawText.replace(/[^\dXx]/g, "");
+        if (isValidIsbnFormat(maybeDigits)) {
+          await handleStableDetectedIsbn(maybeDigits.toUpperCase());
+          return;
+        }
+
+        if (error && error.name !== "NotFoundException") {
           console.warn("ZXing callback error:", error);
         }
       }
     );
+
+    await applyVideoEnhancements();
   } catch (error) {
     console.error("Errore scanner barcode:", error);
     stopBarcodeScanner();
@@ -928,7 +1064,7 @@ async function detectBarcodeFromSource(source) {
 
   try {
     const detector = new window.BarcodeDetector({
-      formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"]
+      formats: ["ean_13"]
     });
 
     const codes = await detector.detect(source);
