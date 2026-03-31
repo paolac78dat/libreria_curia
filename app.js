@@ -16,7 +16,7 @@ let firstDetectionAt = 0;
 let lastDetectionAt = 0;
 
 const REQUIRED_ISBN_HITS = 3;
-const MIN_STABLE_DETECTION_MS = 350;
+const MIN_STABLE_DETECTION_MS = 300;
 const DETECTION_RESET_MS = 1200;
 const ACCEPT_COOLDOWN_MS = 1800;
 
@@ -601,10 +601,32 @@ function containsCyrillic(text = "") {
   return /[\u0400-\u04FF]/.test(String(text));
 }
 
+function containsHan(text = "") {
+  return /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/.test(String(text));
+}
+
+function containsHiraganaKatakana(text = "") {
+  return /[\u3040-\u30FF]/.test(String(text));
+}
+
+function containsHangul(text = "") {
+  return /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(String(text));
+}
+
+function containsUnsupportedScript(text = "") {
+  const value = String(text || "");
+  return (
+    containsCyrillic(value) ||
+    containsHan(value) ||
+    containsHiraganaKatakana(value) ||
+    containsHangul(value)
+  );
+}
+
 function looksLatin(text = "") {
   const value = String(text || "").trim();
   if (!value) return false;
-  return !containsCyrillic(value);
+  return !containsUnsupportedScript(value);
 }
 
 function isPreferredReadableDoc(doc) {
@@ -629,8 +651,8 @@ function getPreferredDocScore(doc) {
   if (languages.includes("spa")) score += 10;
   if (languages.includes("ger")) score += 10;
 
-  if (containsCyrillic(title)) score -= 120;
-  if (containsCyrillic(author)) score -= 100;
+  if (containsUnsupportedScript(title)) score -= 140;
+  if (containsUnsupportedScript(author)) score -= 120;
 
   if (doc?.cover_i) score += 8;
   if (doc?.first_publish_year) score += 4;
@@ -656,7 +678,7 @@ function isReturnedBookReadable(book) {
   if (!book) return false;
   const title = String(book.title || "");
   const author = String(book.author || "");
-  return !containsCyrillic(title) && !containsCyrillic(author);
+  return !containsUnsupportedScript(title) && !containsUnsupportedScript(author);
 }
 
 async function searchByManualIsbn() {
@@ -891,6 +913,27 @@ async function applyVideoEnhancements() {
   }
 }
 
+async function detectBarcodeNativeFromVideo(videoElement) {
+  if (!("BarcodeDetector" in window) || !videoElement) return null;
+
+  try {
+    const detector = new window.BarcodeDetector({ formats: ["ean_13"] });
+    const codes = await detector.detect(videoElement);
+    if (!codes || !codes.length) return null;
+
+    for (const code of codes) {
+      const raw = String(code.rawValue || "").replace(/[^\dXx]/g, "");
+      if (/^(97[89]\d{10}|\d{9}[0-9Xx])$/.test(raw)) {
+        return raw.toUpperCase();
+      }
+    }
+
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
 async function handleStableDetectedIsbn(isbn) {
   const now = Date.now();
 
@@ -932,6 +975,39 @@ async function handleStableDetectedIsbn(isbn) {
   stopBarcodeScanner();
   await searchByManualIsbn();
 }
+
+function startNativeBarcodePolling() {
+  if (!els.barcodeVideo) return;
+
+  let cancelled = false;
+
+  const loop = async () => {
+    if (cancelled || barcodeBusy || !els.barcodeVideo || els.barcodeScanner?.classList.contains("hidden")) {
+      return;
+    }
+
+    try {
+      const nativeIsbn = await detectBarcodeNativeFromVideo(els.barcodeVideo);
+      if (nativeIsbn) {
+        await handleStableDetectedIsbn(nativeIsbn);
+      }
+    } catch (error) {
+      console.warn("Polling BarcodeDetector fallito:", error);
+    }
+
+    if (!cancelled && !barcodeBusy) {
+      setTimeout(loop, 180);
+    }
+  };
+
+  setTimeout(loop, 250);
+
+  return () => {
+    cancelled = true;
+  };
+}
+
+let stopNativePolling = null;
 
 async function startBarcodeScanner() {
   clearMessage();
@@ -1009,6 +1085,11 @@ async function startBarcodeScanner() {
     );
 
     await applyVideoEnhancements();
+
+    if (typeof stopNativePolling === "function") {
+      stopNativePolling();
+    }
+    stopNativePolling = startNativeBarcodePolling();
   } catch (error) {
     console.error("Errore scanner barcode:", error);
     stopBarcodeScanner();
@@ -1117,10 +1198,10 @@ async function detectIsbnFromImage(file) {
     const width = img.naturalWidth || img.width;
     const height = img.naturalHeight || img.height;
 
-    let isbn = await detectBarcodeWithZXingFromImageElement(img);
+    let isbn = await detectBarcodeFromSource(img);
     if (isbn) return isbn;
 
-    isbn = await detectBarcodeFromSource(img);
+    isbn = await detectBarcodeWithZXingFromImageElement(img);
     if (isbn) return isbn;
 
     if ("createImageBitmap" in window) {
@@ -1134,10 +1215,10 @@ async function detectIsbnFromImage(file) {
     }
 
     const fullCanvas = downscaleCanvasIfNeeded(drawImageToCanvas(img), 1800);
-    isbn = await detectBarcodeWithZXingFromCanvas(fullCanvas);
+    isbn = await detectBarcodeFromSource(fullCanvas);
     if (isbn) return isbn;
 
-    isbn = await detectBarcodeFromSource(fullCanvas);
+    isbn = await detectBarcodeWithZXingFromCanvas(fullCanvas);
     if (isbn) return isbn;
 
     const lowerHalf = downscaleCanvasIfNeeded(
@@ -1149,10 +1230,10 @@ async function detectIsbnFromImage(file) {
       }),
       1800
     );
-    isbn = await detectBarcodeWithZXingFromCanvas(lowerHalf);
+    isbn = await detectBarcodeFromSource(lowerHalf);
     if (isbn) return isbn;
 
-    isbn = await detectBarcodeFromSource(lowerHalf);
+    isbn = await detectBarcodeWithZXingFromCanvas(lowerHalf);
     if (isbn) return isbn;
 
     const lowerWide = downscaleCanvasIfNeeded(
@@ -1164,10 +1245,10 @@ async function detectIsbnFromImage(file) {
       }),
       1800
     );
-    isbn = await detectBarcodeWithZXingFromCanvas(lowerWide);
+    isbn = await detectBarcodeFromSource(lowerWide);
     if (isbn) return isbn;
 
-    isbn = await detectBarcodeFromSource(lowerWide);
+    isbn = await detectBarcodeWithZXingFromCanvas(lowerWide);
     if (isbn) return isbn;
 
     const lowerCenter = downscaleCanvasIfNeeded(
@@ -1179,10 +1260,10 @@ async function detectIsbnFromImage(file) {
       }),
       1800
     );
-    isbn = await detectBarcodeWithZXingFromCanvas(lowerCenter);
+    isbn = await detectBarcodeFromSource(lowerCenter);
     if (isbn) return isbn;
 
-    isbn = await detectBarcodeFromSource(lowerCenter);
+    isbn = await detectBarcodeWithZXingFromCanvas(lowerCenter);
     if (isbn) return isbn;
 
     return null;
@@ -1494,13 +1575,20 @@ async function handleScanCoverFile(file) {
     const aiResult = await analyzeCoverWithAI(file);
 
     if (aiResult && (aiResult.title || aiResult.author || aiResult.genre)) {
-      fillFieldsFromBookData(aiResult);
-      setScanStatus("AI completata. Controlla i campi e correggi se serve.");
-      showMessage("Dati trovati con AI. Verifica prima di salvare.", "success");
-      return;
+      if (isReturnedBookReadable(aiResult)) {
+        fillFieldsFromBookData(aiResult);
+        setScanStatus("AI completata. Controlla i campi e correggi se serve.");
+        showMessage("Dati trovati con AI. Verifica prima di salvare.", "success");
+        return;
+      }
     }
 
-    fillFieldsFromBookData(guessed);
+    fillFieldsFromBookData({
+      title: looksLatin(guessed.title) ? guessed.title : "",
+      author: looksLatin(guessed.author) ? guessed.author : "",
+      genre: ""
+    });
+
     setScanStatus("Dati parziali trovati. Puoi correggere i campi o inserire l'ISBN manualmente.");
     showMessage("Non ho trovato un ISBN leggibile. Puoi usare ISBN manuale oppure correggere i campi.", "info");
   } catch (error) {
@@ -1598,6 +1686,10 @@ function bindStaticEvents() {
 
   els.scanCoverBtn?.addEventListener("click", () => {
     stopBarcodeScanner();
+    if (typeof stopNativePolling === "function") {
+      stopNativePolling();
+      stopNativePolling = null;
+    }
     els.scanImageInput?.click();
   });
 
@@ -1607,6 +1699,10 @@ function bindStaticEvents() {
 
   els.stopBarcodeBtn?.addEventListener("click", () => {
     stopBarcodeScanner();
+    if (typeof stopNativePolling === "function") {
+      stopNativePolling();
+      stopNativePolling = null;
+    }
     setScanStatus("Scanner barcode chiuso.");
   });
 
@@ -1639,6 +1735,11 @@ async function bootstrap() {
     hideBooks();
     clearScanArea();
     stopBarcodeScanner();
+
+    if (typeof stopNativePolling === "function") {
+      stopNativePolling();
+      stopNativePolling = null;
+    }
 
     if (els.pageSizeSelect) {
       pageSize = Number(els.pageSizeSelect.value) || 20;
